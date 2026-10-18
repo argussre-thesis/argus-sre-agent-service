@@ -11,6 +11,8 @@ after(() => gw.close());
 const context = { tenantId: "t_1", cluster: "prod-eu" };
 
 const answer = (text: string, stop_reason = "end_turn") => new AIMessage({ content: text, response_metadata: { stop_reason } });
+const report = (evidence: string) => `## Summary\nx\n## Evidence\n${evidence}`;
+const demoPods = '`list_pods {"namespace":"demo"}`';
 // Not respondWithTools: its reply text joins every earlier message, which outgrows a string within 30 calls.
 const listPods = (args: Record<string, unknown>, id: string = crypto.randomUUID()) =>
   new AIMessage({ content: "", tool_calls: [{ name: "list_pods", args, id }] });
@@ -28,10 +30,10 @@ test("a tool call runs on the run's cluster, its result goes back, the report is
   gw.answer(200, { ok: true, data: { items: [] } });
   const model = fakeModel()
     .respond(listPods({ namespace: "demo" }, "call_1"))
-    .respond(answer("## Summary\nNothing wrong."));
-  const { report, steps } = await run(model);
+    .respond(answer(report(`- No pods ${demoPods}`)));
+  const { report: text, steps } = await run(model);
 
-  assert.equal(report, "## Summary\nNothing wrong.");
+  assert.equal(text, report(`- No pods ${demoPods}`));
   assert.deepEqual(gw.requests.at(-1)?.url, "/internal/tenants/t_1/clusters/prod-eu/ops");
   assert.deepEqual(gw.requests.at(-1)?.body, { op: "list_pods", args: { namespace: "demo" } });
   const [system, alert] = model.calls[0]!.messages;
@@ -50,8 +52,8 @@ test("a mistyped arg goes back to the model as an error, without a stack trace, 
   const sent = gw.requests.length;
   const model = fakeModel()
     .respond(listPods({ namespce: "demo" }))
-    .respond(answer("report"));
-  assert.equal((await run(model)).report, "report");
+    .respond(answer(report("None.")));
+  assert.equal((await run(model)).report, report("None."));
 
   const error = model.calls[1]!.messages.at(-1);
   assert.ok(ToolMessage.isInstance(error));
@@ -73,4 +75,44 @@ test("a reply that isn't a normal end fails the run", async () => {
     const model = fakeModel().respond(answer("## Summary\nThe pods", reason));
     await assert.rejects(run(model), new RegExp(`run ended without a report \\(stop reason: ${reason}\\)`));
   }
+});
+
+const wrong = report('- api-1 was OOMKilled `list_pods {"namespace":"prod"}`');
+const fixed = report(`- api-1 was OOMKilled ${demoPods}`);
+
+test("a report citing a call that never ran gets one chance to fix it", async () => {
+  const model = fakeModel().respond(listPods({ namespace: "demo" })).respond(answer(wrong)).respond(answer(fixed));
+  const { report: text, steps } = await run(model);
+
+  assert.equal(text, fixed);
+  const fix = model.calls[2]!.messages.at(-1);
+  assert.ok(HumanMessage.isInstance(fix));
+  assert.ok(
+    fix.text.startsWith(
+      "Your report's citations don't match your tool calls:\n" + '- `list_pods {"namespace":"prod"}` matches no tool call you made\n',
+    ),
+  );
+  assert.deepEqual(
+    steps.map((added) => added.map((m) => m.type)),
+    [["ai"], ["tool"], ["ai"], ["human"], ["ai"]],
+  );
+});
+
+test("the fix's model call counts toward the call limit", async () => {
+  // Calls: list_pods, wrong report, the fix gathering evidence, then a 4th that limit 3 must block.
+  const model = fakeModel()
+    .respond(listPods({ namespace: "demo" }))
+    .respond(answer(wrong))
+    .respond(listPods({ namespace: "demo" }))
+    .respond(answer(fixed));
+  await assert.rejects(run(model, 3), /run level call limit reached with 3 model calls/);
+  assert.equal(model.callCount, 3);
+});
+
+test("a report whose citations are still wrong after the fix fails the run", async () => {
+  const model = fakeModel()
+    .respond(answer(report("- api-1 was OOMKilled")))
+    .respond(answer(report("- api-1 was OOMKilled")));
+  await assert.rejects(run(model), /citations still don't match its tool calls: no tool call cited in: "api-1 was OOMKilled"/);
+  assert.equal(model.callCount, 2);
 });

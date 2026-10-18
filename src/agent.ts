@@ -4,11 +4,14 @@ import {
   anthropicPromptCachingMiddleware,
   type BaseMessage,
   createAgent,
+  createMiddleware,
+  HumanMessage,
   modelCallLimitMiddleware,
   toolErrorMiddleware,
   ToolInvocationError,
 } from "langchain";
 import * as z from "zod";
+import { citationProblems } from "./citations.ts";
 import { log } from "./log.ts";
 import type { OpsContext } from "./ops.ts";
 import type { createTools } from "./tools.ts";
@@ -24,6 +27,8 @@ export function createSreAgent(model: BaseChatModel, systemPrompt: string, tools
       toolErrorMiddleware({
         onError: (err) => (ToolInvocationError.isInstance(err) ? `Error BAD_ARGS: ${err.toolError.message}` : undefined),
       }),
+      // Before the call limit: after-model hooks run last to first, and a jump skips the rest, so the limit counts the call first.
+      citationCheck,
       // "error": at the limit the run fails, instead of ending without a report and looking finished.
       modelCallLimitMiddleware({ runLimit: maxModelCalls, exitBehavior: "error" }),
       // "ignore": other providers are skipped without a warning (OpenAI caches by itself).
@@ -43,6 +48,35 @@ function stopReason(m: AIMessage): string | undefined {
   return meta.stop_reason ?? meta.finish_reason ?? meta.status;
 }
 
+function finished(m: AIMessage): boolean {
+  const reason = stopReason(m);
+  return reason === undefined || FINISHED.includes(reason);
+}
+
+const FIX_REQUEST = "Your report's citations don't match your tool calls:";
+
+// One chance to fix the report's citations, inside the run. The fix's call is counted, but a jump goes straight to
+// the model, past the limit's check: at most one call over the limit.
+const citationCheck = createMiddleware({
+  name: "CitationCheck",
+  afterModel: {
+    canJumpTo: ["model"],
+    hook: (state) => {
+      const last = state.messages.at(-1);
+      if (!AIMessage.isInstance(last) || last.tool_calls?.length || !finished(last)) return;
+      const problems = citationProblems(last.text, state.messages);
+      if (problems.length === 0) return;
+      if (state.messages.some((m) => HumanMessage.isInstance(m) && m.text.startsWith(FIX_REQUEST))) {
+        throw new Error(`the report's citations still don't match its tool calls: ${problems.join("; ")}`);
+      }
+      log("warn", "report citations don't match, asking for a fix", { problems });
+      const list = problems.map((p) => `- ${p}`).join("\n");
+      const fix = `${FIX_REQUEST}\n${list}\nWrite the whole report again, ending each Evidence bullet with a tool call you made: its name and its arguments as JSON, in backticks. Make the call first if you need the evidence.`;
+      return { messages: [new HumanMessage(fix)], jumpTo: "model" };
+    },
+  },
+});
+
 // Runs the agent until it answers and returns the report. `onStep` gets each step's new messages, in order.
 // Throws when the run ends any other way: call limit, max_tokens, refusal, API error.
 export async function runAgent(
@@ -52,6 +86,8 @@ export async function runAgent(
   onStep: (added: BaseMessage[]) => Promise<void>,
 ): Promise<string> {
   let all = messages;
+  // context is passed to runtime so later on in callOp we can say runtime.context and get context. 
+  // The agent should never be the one providing that.
   for await (const state of await agent.stream({ messages }, { streamMode: "values", context })) {
     if (state.messages.length === all.length) continue;
     const added = state.messages.slice(all.length);
@@ -60,9 +96,8 @@ export async function runAgent(
     await onStep(added);
   }
   const last = all.at(-1);
-  const reason = AIMessage.isInstance(last) ? stopReason(last) : undefined;
-  if (!AIMessage.isInstance(last) || (reason !== undefined && !FINISHED.includes(reason))) {
-    throw new Error(`run ended without a report (stop reason: ${reason ?? "none"})`);
+  if (!AIMessage.isInstance(last) || !finished(last)) {
+    throw new Error(`run ended without a report (stop reason: ${(AIMessage.isInstance(last) && stopReason(last)) || "none"})`);
   }
   return last.text;
 }
