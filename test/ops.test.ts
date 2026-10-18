@@ -39,6 +39,22 @@ test("every reply becomes text for the model", async () => {
   }
 });
 
+test("a result over 20,000 characters is cut, with a note, never inside an emoji", async () => {
+  const text = (data: string) => {
+    gw.answer(200, { ok: true, data });
+    return callOp(gw.url, ctx, "ping", {});
+  };
+  const note = (total: string, kept: string) =>
+    `\n[Cut: this result is ${total} characters, only the first ${kept} are shown. Narrow the query to see the rest.]`;
+  const x = (n: number) => "x".repeat(n);
+
+  // JSON adds two quotes: 19,998 x's are exactly the cap.
+  assert.equal(await text(x(19_998)), `"${x(19_998)}"`);
+  assert.equal(await text(x(19_999)), `"${x(19_999)}${note("20,001", "20,000")}`);
+  // The emoji's first half would be the last character kept.
+  assert.equal(await text(`${x(19_998)}😀`), `"${x(19_998)}${note("20,002", "19,999")}`);
+});
+
 test("a trailing slash in OPS_URL", async () => {
   gw.answer(200, { ok: true, data: 1 });
   assert.equal(await callOp(`${gw.url}/`, ctx, "ping", {}), "1");
