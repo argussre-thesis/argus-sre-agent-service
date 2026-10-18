@@ -1,3 +1,10 @@
+import { HumanMessage } from "langchain";
+
+// The first message of an investigation: the alert as its source sent it.
+export function alertMessage(cluster: string, alert: unknown): HumanMessage {
+  return new HumanMessage(`Alert from cluster "${cluster}":\n${JSON.stringify(alert, null, 2)}`);
+}
+
 // No tool names (the model gets the tool list) and no per-run values: the alert is third-party text, so it goes in the first HumanMessage.
 export const INVESTIGATION_PROMPT = `You are an SRE investigating an alert in a Kubernetes cluster. Find the root cause with your tools, then write the incident report.
 

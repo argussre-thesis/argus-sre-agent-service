@@ -1,6 +1,10 @@
-import express, { type ErrorRequestHandler } from "express";
+import { createSreAgent } from "./agent.ts";
+import { createApp } from "./app.ts";
 import { loadConfig, type Config } from "./config.ts";
 import { log } from "./log.ts";
+import { chatModel } from "./model.ts";
+import { INVESTIGATION_PROMPT } from "./prompts.ts";
+import { createTools } from "./tools.ts";
 
 let config: Config;
 try {
@@ -10,20 +14,10 @@ try {
   process.exit(1);
 }
 
-const app = express();
-app.use(express.json({ limit: "1mb" })); 
+const { name, model } = chatModel(config.model);
+const agent = createSreAgent(model, INVESTIGATION_PROMPT, createTools(config.opsUrl), config.maxModelCalls);
 
-app.use((_req, res) => {
-  res.status(404).json({ error: "not found" });
-});
-
-app.use(((err, _req, res, next) => {
-  if (res.headersSent) return next(err);
-  if (!err.expose) log("error", "request failed", { error: err.stack ?? String(err) });
-  res.status(err.status ?? 500).json({ error: err.expose ? err.message : "internal error" });
-}) satisfies ErrorRequestHandler);
-
-app.listen(config.port, "127.0.0.1", (err) => {
+createApp({ agent, model: name }).listen(config.port, "127.0.0.1", (err) => {
   if (err) {
     log("error", "cannot listen", { port: config.port, error: err.message });
     process.exit(1);
