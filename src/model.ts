@@ -22,5 +22,7 @@ export function chatModel(m: ModelConfig) {
     });
     return { name, model };
   }
-  return { name, model: new ChatOpenAI({ model: m.name, maxRetries: MAX_RETRIES, timeout: TIMEOUT_MS }) };
+
+  const model = new ChatOpenAI({ model: m.name, useResponsesApi: true, maxRetries: MAX_RETRIES, timeout: TIMEOUT_MS });
+  return { name, model };
 }

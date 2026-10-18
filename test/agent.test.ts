@@ -1,0 +1,76 @@
+import assert from "node:assert/strict";
+import { after, test } from "node:test";
+import { AIMessage, type BaseMessage, fakeModel, HumanMessage, SystemMessage, ToolMessage } from "langchain";
+import { createSreAgent, runAgent } from "../src/agent.ts";
+import { INVESTIGATION_PROMPT } from "../src/prompts.ts";
+import { createTools } from "../src/tools.ts";
+import { fakeGateway } from "./helpers.ts";
+
+const gw = await fakeGateway();
+after(() => gw.close());
+const context = { tenantId: "t_1", cluster: "prod-eu" };
+
+const answer = (text: string, stop_reason = "end_turn") => new AIMessage({ content: text, response_metadata: { stop_reason } });
+// Not respondWithTools: its reply text joins every earlier message, which outgrows a string within 30 calls.
+const listPods = (args: Record<string, unknown>, id: string = crypto.randomUUID()) =>
+  new AIMessage({ content: "", tool_calls: [{ name: "list_pods", args, id }] });
+
+async function run(model: ReturnType<typeof fakeModel>, maxModelCalls = 30) {
+  const agent = createSreAgent(model, INVESTIGATION_PROMPT, createTools(gw.url), maxModelCalls);
+  const steps: BaseMessage[][] = [];
+  const report = await runAgent(agent, [new HumanMessage("api pods crash-looping in demo")], context, async (added) => {
+    steps.push(added);
+  });
+  return { report, steps };
+}
+
+test("a tool call runs on the run's cluster, its result goes back, the report is returned", async () => {
+  gw.answer(200, { ok: true, data: { items: [] } });
+  const model = fakeModel()
+    .respond(listPods({ namespace: "demo" }, "call_1"))
+    .respond(answer("## Summary\nNothing wrong."));
+  const { report, steps } = await run(model);
+
+  assert.equal(report, "## Summary\nNothing wrong.");
+  assert.deepEqual(gw.requests.at(-1)?.url, "/internal/tenants/t_1/clusters/prod-eu/ops");
+  assert.deepEqual(gw.requests.at(-1)?.body, { op: "list_pods", args: { namespace: "demo" } });
+  const [system, alert] = model.calls[0]!.messages;
+  assert.ok(SystemMessage.isInstance(system) && system.text === INVESTIGATION_PROMPT);
+  assert.ok(HumanMessage.isInstance(alert));
+  const result = model.calls[1]!.messages.at(-1);
+  assert.ok(ToolMessage.isInstance(result));
+  assert.deepEqual([result.tool_call_id, result.content], ["call_1", '{"items":[]}']);
+  assert.deepEqual(
+    steps.map((added) => added.map((m) => m.type)),
+    [["ai"], ["tool"], ["ai"]],
+  );
+});
+
+test("a mistyped arg goes back to the model as an error, without a stack trace, and the run goes on", async () => {
+  const sent = gw.requests.length;
+  const model = fakeModel()
+    .respond(listPods({ namespce: "demo" }))
+    .respond(answer("report"));
+  assert.equal((await run(model)).report, "report");
+
+  const error = model.calls[1]!.messages.at(-1);
+  assert.ok(ToolMessage.isInstance(error));
+  assert.equal(error.status, "error");
+  assert.match(error.text, /^Error BAD_ARGS: Received tool input did not match expected schema\n.*Unrecognized key: "namespce"/s);
+  assert.doesNotMatch(error.text, /\n\s+at /);
+  assert.equal(gw.requests.length, sent);
+});
+
+test("the call limit fails the run, before LangGraph's own step limit does", async () => {
+  const model = fakeModel();
+  for (let i = 0; i < 31; i++) model.respond(listPods({ namespace: "demo" }));
+  await assert.rejects(run(model, 30), /Model call limits exceeded: run level call limit reached with 30 model calls/);
+  assert.equal(model.callCount, 30);
+});
+
+test("a reply that isn't a normal end fails the run", async () => {
+  for (const reason of ["max_tokens", "refusal"]) {
+    const model = fakeModel().respond(answer("## Summary\nThe pods", reason));
+    await assert.rejects(run(model), new RegExp(`run ended without a report \\(stop reason: ${reason}\\)`));
+  }
+});
