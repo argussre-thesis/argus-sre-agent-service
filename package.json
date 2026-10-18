@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node src/index.ts",
     "dev": "node --env-file-if-exists=.env src/index.ts",
+    "investigate": "node --env-file-if-exists=.env dev/investigate.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test \"test/**/*.test.ts\""
   },
