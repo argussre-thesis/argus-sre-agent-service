@@ -52,7 +52,17 @@ export const startInvestigationService = async (
     )
     .then((end) => prisma.investigation.update({ where: { id }, data: { ...end, finishedAt: new Date() } }))
     .then(({ status }) => log("info", "investigation finished", { id, status, steps: seq - 1 }))
-    // The row then stays `running` (5b.5 marks those failed at startup).
+    // The row then stays `running` until the next startup marks it failed.
     .catch((err: Error) => log("error", "cannot save the investigation's end", { id, error: err.stack ?? String(err) }));
   return ok({ id });
+};
+
+// At startup, before any run starts: a run still `running` lived in a process that is gone.
+// shortcut: assumes one instance (it would fail another's live runs); runs need an owner before we scale.
+export const failInterruptedInvestigationsService = async () => {
+  const { count } = await prisma.investigation.updateMany({
+    where: { status: "running" },
+    data: { status: "failed", error: "the service stopped before the run finished", finishedAt: new Date() },
+  });
+  return count;
 };
