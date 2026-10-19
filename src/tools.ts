@@ -26,6 +26,7 @@ export function createTools(opsUrl: string) {
         name,
         description,
         schema: z.strictObject(shape),
+        extras: { strict: true },
       },
     );
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
+import { ChatAnthropic } from "@langchain/anthropic";
 import { ToolInputParsingException } from "@langchain/core/tools";
-import { toJsonSchema } from "@langchain/core/utils/json_schema";
 import { createTools } from "../src/tools.ts";
 import { fakeGateway } from "./helpers.ts";
 
@@ -10,17 +10,20 @@ after(() => gw.close());
 const tools = createTools(gw.url);
 const context = { tenantId: "t_1", cluster: "prod-eu" };
 
-test("what the model sees: namespace required, nothing else allowed, no tenant or cluster", () => {
+test("what Claude receives: namespace required, nothing else allowed, no tenant or cluster, strict", () => {
+  // The tools as ChatAnthropic puts them in the request; its constructor only checks that a key is set.
+  process.env.ANTHROPIC_API_KEY ??= "test";
+  type Sent = { name: string; strict?: boolean; input_schema: { properties: object; required: string[]; additionalProperties: boolean } };
+  const sent = new ChatAnthropic({ model: "claude-haiku-5-5" }).invocationParams({ tools }).tools as unknown as Sent[];
   assert.deepEqual(
-    tools.map((t) => t.name),
+    sent.map((t) => t.name),
     ["list_pods", "list_deployments"],
   );
-  for (const t of tools) {
-    // The same conversion ChatAnthropic does before sending the tools.
-    const schema = toJsonSchema(t.schema) as { properties: object; required: string[]; additionalProperties: boolean };
-    assert.deepEqual(Object.keys(schema.properties), ["namespace", "labelSelector"], t.name);
-    assert.deepEqual(schema.required, ["namespace"], t.name);
-    assert.equal(schema.additionalProperties, false, t.name);
+  for (const { name, strict, input_schema: schema } of sent) {
+    assert.deepEqual(Object.keys(schema.properties), ["namespace", "labelSelector"], name);
+    assert.deepEqual(schema.required, ["namespace"], name);
+    assert.equal(schema.additionalProperties, false, name);
+    assert.equal(strict, true, name);
   }
 });
 
