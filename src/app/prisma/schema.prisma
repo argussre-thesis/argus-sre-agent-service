@@ -1,0 +1,45 @@
+generator client {
+  provider = "prisma-client"
+  output   = "./generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// One agent run on one alert. It keeps the model and system prompt it ran with: a conversation must continue with the same ones.
+model Investigation {
+  id           String              @id @default(cuid())
+  tenantId     String              @map("tenant_id")
+  cluster      String
+  incidentId   String?             @map("incident_id")
+  model        String
+  systemPrompt String              @map("system_prompt")
+  status       InvestigationStatus @default(running)
+  report       String?
+  error        String?
+  startedAt    DateTime            @default(now()) @map("started_at")
+  finishedAt   DateTime?           @map("finished_at")
+  messages     Message[]
+
+  @@map("investigation")
+}
+
+// One message of the conversation, as LangChain stores it. seq is its position: 0 is the alert.
+model Message {
+  investigationId String        @map("investigation_id")
+  seq             Int
+  data            Json
+  createdAt       DateTime      @default(now()) @map("created_at")
+  investigation   Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+
+  @@id([investigationId, seq])
+  @@map("message")
+}
+
+// Lowercase, so the API's status values stay as they are.
+enum InvestigationStatus {
+  running
+  done
+  failed
+}
