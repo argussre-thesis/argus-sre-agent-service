@@ -3,11 +3,32 @@ import { test } from "node:test";
 import { loadConfig } from "../src/config.ts";
 
 test("defaults with only an Anthropic key", () => {
-  assert.deepEqual(loadConfig({ ANTHROPIC_API_KEY: "k" }), {
+  const defaults = {
     port: 8090,
     opsUrl: "http://127.0.0.1:8081",
     model: { provider: "anthropic", name: "claude-opus-5-5", effort: "high" },
     maxModelCalls: 30,
+  };
+  assert.deepEqual(loadConfig({ ANTHROPIC_API_KEY: "k" }), defaults);
+  // `KEY=` lines in a .env file count as unset.
+  const empty = { PORT: "", OPS_URL: "", MODEL_PROVIDER: "", ANTHROPIC_MODEL: "", MODEL_EFFORT: "", MAX_MODEL_CALLS: "" };
+  assert.deepEqual(loadConfig({ ANTHROPIC_API_KEY: "k", ...empty }), defaults);
+});
+
+test("set values are used", () => {
+  const env = {
+    ANTHROPIC_API_KEY: "k",
+    PORT: "9000",
+    OPS_URL: "https://gateway.internal:8081",
+    ANTHROPIC_MODEL: "claude-haiku-5-5",
+    MODEL_EFFORT: "low",
+    MAX_MODEL_CALLS: "10",
+  };
+  assert.deepEqual(loadConfig(env), {
+    port: 9000,
+    opsUrl: "https://gateway.internal:8081",
+    model: { provider: "anthropic", name: "claude-haiku-5-5", effort: "low" },
+    maxModelCalls: 10,
   });
 });
 
@@ -21,12 +42,13 @@ test("openai needs its key and model, and has no effort", () => {
 
 test("bad values are rejected", () => {
   const cases: [name: string, value: string, error: RegExp][] = [
-    ["ANTHROPIC_API_KEY", "", /Missing required environment variable ANTHROPIC_API_KEY/],
-    ["MODEL_PROVIDER", "gemini", /MODEL_PROVIDER must be one of anthropic, openai/],
-    ["MODEL_EFFORT", "fast", /MODEL_EFFORT must be one of low, medium, high, xhigh, max/],
-    ["MAX_MODEL_CALLS", "2.5", /MAX_MODEL_CALLS must be a positive whole number/],
-    ["PORT", "0", /PORT must be a positive whole number/],
-    ["OPS_URL", "127.0.0.1:8081", /OPS_URL must start with http/],
+    ["ANTHROPIC_API_KEY", "", /expected string, received undefined\n.*at ANTHROPIC_API_KEY/],
+    ["MODEL_PROVIDER", "gemini", /Expected 'anthropic' \| 'openai'\n.*at MODEL_PROVIDER/],
+    ["MODEL_EFFORT", "fast", /expected one of "low"\|"medium"\|"high"\|"xhigh"\|"max"\n.*at MODEL_EFFORT/],
+    ["MAX_MODEL_CALLS", "2.5", /expected int\b.*\n.*at MAX_MODEL_CALLS/],
+    ["PORT", "0", /Too small.*\n.*at PORT/],
+    ["OPS_URL", "127.0.0.1:8081", /Invalid URL\n.*at OPS_URL/],
+    ["OPS_URL", "ftp://gateway:8081", /Invalid URL\n.*at OPS_URL/],
   ];
   for (const [name, value, error] of cases) {
     assert.throws(() => loadConfig({ ANTHROPIC_API_KEY: "k", [name]: value }), error, name);
