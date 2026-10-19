@@ -1,66 +1,58 @@
-import { randomUUID } from "node:crypto";
+import { mapChatMessagesToStoredMessages } from "@langchain/core/messages";
 import type { BaseMessage } from "langchain";
-import { runAgent, type SreAgent } from "../../agent/agent.ts";
-import { log } from "../../log.ts";
+import { runAgent } from "../../agent/agent.ts";
 import { alertMessage } from "../../agent/prompts.ts";
+import { log } from "../../log.ts";
+import type { AppDeps } from "../app.ts";
+import { prisma } from "../lib/prisma.ts";
+import type { Prisma } from "../prisma/generated/prisma/client.ts";
 import type { StartInvestigationBody } from "../schemas/investigation.schema.ts";
 import { fail, ok } from "../types/serviceResponse.ts";
 
-export type Investigation = {
-  id: string;
-  tenantId: string;
-  cluster: string;
-  incidentId?: string;
-  model: string;
-  status: "running" | "done" | "failed";
-  messages: BaseMessage[];
-  report?: string;
-  error?: string;
-  startedAt: string;
-  finishedAt?: string;
+// LangChain's stored form ({ type, data }), which mapStoredMessagesToChatMessages turns back into messages.
+// It is plain JSON; the cast is only because its interfaces lack the index signature Prisma's JSON type wants.
+const messageRows = (messages: BaseMessage[], firstSeq: number) =>
+  mapChatMessagesToStoredMessages(messages).map((data, i) => ({
+    seq: firstSeq + i,
+    data: data as unknown as Prisma.InputJsonObject,
+  }));
+
+export const getInvestigationService = async (id: string) => {
+  const investigation = await prisma.investigation.findUnique({ where: { id }, omit: { systemPrompt: true } });
+  if (!investigation) {
+    return fail(404, "INVESTIGATION_NOT_FOUND", "Investigation not found");
+  }
+  return ok(investigation);
 };
 
-// shortcut: in memory, so a restart forgets every run; Postgres in 5b.
-export const investigations = new Map<string, Investigation>();
-
-export const getInvestigationService = (id: string) => {
-  const inv = investigations.get(id);
-  if (!inv) return fail(404, "INVESTIGATION_NOT_FOUND", "Investigation not found");
-  const { messages, ...rest } = inv;
-  return ok(rest);
-};
-
-// Starts the run in the background and returns at once; the run updates the investigation as it goes.
-export const startInvestigationService = (
-  agent: SreAgent,
-  model: string,
+// Saves the investigation with its alert, then runs it in the background: each step's messages are saved as they come.
+export const startInvestigationService = async (
+  { agent, model, systemPrompt }: AppDeps,
   { tenantId, cluster, incidentId, alert }: StartInvestigationBody,
 ) => {
-  const inv: Investigation = {
-    id: randomUUID(),
-    tenantId,
-    cluster,
-    incidentId,
-    model,
-    status: "running",
-    messages: [alertMessage(cluster, alert)],
-    startedAt: new Date().toISOString(),
-  };
-  investigations.set(inv.id, inv);
-  log("info", "investigation started", { id: inv.id, tenantId, cluster, incidentId });
+  const messages = [alertMessage(cluster, alert)];
+  const { id } = await prisma.investigation.create({
+    data: { tenantId, cluster, incidentId, model, systemPrompt, messages: { create: messageRows(messages, 0) } },
+    select: { id: true },
+  });
+  log("info", "investigation started", { id, tenantId, cluster, incidentId });
 
+  let seq = messages.length;
   // Nothing awaits this promise, so it must never reject: Node 24 exits on an unhandled rejection.
-  runAgent(agent, [...inv.messages], { tenantId, cluster }, async (added) => {
-    inv.messages.push(...added);
+  runAgent(agent, messages, { tenantId, cluster }, async (added) => {
+    await prisma.message.createMany({ data: messageRows(added, seq).map((row) => ({ ...row, investigationId: id })) });
+    seq += added.length;
   })
-    .then((report) => Object.assign(inv, { status: "done", report }))
-    .catch((err: Error) => {
-      Object.assign(inv, { status: "failed", error: err.message });
-      log("error", "investigation failed", { id: inv.id, error: err.stack ?? String(err) });
-    })
-    .finally(() => {
-      inv.finishedAt = new Date().toISOString();
-      log("info", "investigation finished", { id: inv.id, status: inv.status, steps: inv.messages.length - 1 });
-    });
-  return ok({ id: inv.id });
+    .then(
+      (report) => ({ status: "done" as const, report }),
+      (err: Error) => {
+        log("error", "investigation failed", { id, error: err.stack ?? String(err) });
+        return { status: "failed" as const, error: err.message };
+      },
+    )
+    .then((end) => prisma.investigation.update({ where: { id }, data: { ...end, finishedAt: new Date() } }))
+    .then(({ status }) => log("info", "investigation finished", { id, status, steps: seq - 1 }))
+    // The row then stays `running` (5b.5 marks those failed at startup).
+    .catch((err: Error) => log("error", "cannot save the investigation's end", { id, error: err.stack ?? String(err) }));
+  return ok({ id });
 };

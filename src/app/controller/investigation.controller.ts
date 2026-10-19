@@ -5,10 +5,10 @@ import { errorResponse, successResponse } from "../utils/responseHandler.ts";
 
 // Takes the agent as an argument, so tests can pass one with a fake model.
 export const startInvestigation =
-  ({ agent, model }: AppDeps) =>
+  (deps: AppDeps) =>
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const result = startInvestigationService(agent, model, req.body);
+      const result = await startInvestigationService(deps, req.body);
       return successResponse(res, 202, "Investigation started", result.data);
     } catch (error) {
       next(error);
@@ -21,7 +21,7 @@ export const getInvestigation = async (
   next: NextFunction,
 ) => {
   try {
-    const result = getInvestigationService(req.params.id as string);
+    const result = await getInvestigationService(req.params.id as string);
 
     if (!result.success) {
       return errorResponse(

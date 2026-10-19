@@ -3,10 +3,11 @@ import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { after, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+import { mapStoredMessagesToChatMessages, type StoredMessage } from "@langchain/core/messages";
 import { AIMessage, fakeModel } from "langchain";
 import { createSreAgent } from "../src/agent/agent.ts";
 import { createApp } from "../src/app/app.ts";
-import { investigations } from "../src/app/model/investigationModel.ts";
+import { prisma } from "../src/app/lib/prisma.ts";
 import { INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
 import { createTools } from "../src/agent/tools.ts";
 import { fakeGateway } from "./helpers.ts";
@@ -14,22 +15,32 @@ import { fakeGateway } from "./helpers.ts";
 const gw = await fakeGateway();
 after(() => gw.close());
 
+// shortcut: no test database, these tests use DATABASE_URL's (.env) and delete only what they started; a test database for CI.
+const started: string[] = [];
+after(async () => {
+  await prisma.investigation.deleteMany({ where: { id: { in: started } } });
+  await prisma.$disconnect();
+});
+
 const start = { tenantId: "t_1", cluster: "prod-eu", incidentId: "inc_1", alert: { labels: { alertname: "KubePodCrashLooping" } } };
 const report = '## Summary\nx\n## Evidence\n- No pods `list_pods {"namespace":"demo"}`';
 
 async function serve(model: ReturnType<typeof fakeModel>) {
   const agent = createSreAgent(model, INVESTIGATION_PROMPT, createTools(gw.url), 30);
-  const server = createApp({ agent, model: "fake:model" }).listen(0, "127.0.0.1");
+  const server = createApp({ agent, model: "fake:model", systemPrompt: INVESTIGATION_PROMPT }).listen(0, "127.0.0.1");
   await once(server, "listening");
   after(() => new Promise((resolve) => server.close(resolve)));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   return {
-    post: (body: unknown) =>
-      fetch(`${url}/investigations`, {
+    async post(body: unknown) {
+      const res = await fetch(`${url}/investigations`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: typeof body === "string" ? body : JSON.stringify(body),
-      }),
+      });
+      if (res.status === 202) started.push((await res.clone().json()).data.id);
+      return res;
+    },
     get: (path: string) => fetch(`${url}${path}`),
     async finished(id: string) {
       for (let i = 0; i < 200; i++) {
@@ -86,7 +97,10 @@ test("a start answers 202 at once, the run goes on in the background, and the re
     incidentId: "inc_1",
     model: "fake:model",
     status: "running",
+    report: null,
+    error: null,
     startedAt: running.startedAt,
+    finishedAt: null,
   });
 
   release();
@@ -95,10 +109,15 @@ test("a start answers 202 at once, the run goes on in the background, and the re
   assert.ok(done.startedAt <= done.finishedAt);
   assert.equal(gw.requests.at(-1)?.url, "/internal/tenants/t_1/clusters/prod-eu/ops");
   assert.match(model.calls[0]!.messages[1]!.text, /^Alert from cluster "prod-eu":\n.*KubePodCrashLooping/s);
+  // Stored with the prompt it ran with, and every message in order, loadable as LangChain messages again.
+  const row = await prisma.investigation.findUniqueOrThrow({ where: { id }, include: { messages: { orderBy: { seq: "asc" } } } });
+  assert.equal(row.systemPrompt, INVESTIGATION_PROMPT);
+  const messages = mapStoredMessagesToChatMessages(row.messages.map((m) => m.data as unknown as StoredMessage));
   assert.deepEqual(
-    investigations.get(id)!.messages.map((m) => m.type),
+    messages.map((m) => m.type),
     ["human", "ai", "tool", "ai"],
   );
+  assert.equal(messages.at(-1)!.text, report);
 });
 
 test("a run that fails is failed with its error, and the service keeps serving", async () => {
@@ -109,7 +128,7 @@ test("a run that fails is failed with its error, and the service keeps serving",
   const failed = await api.finished(id);
   assert.equal(failed.status, "failed");
   assert.equal(failed.error, "run ended without a report (stop reason: max_tokens)");
-  assert.equal(failed.report, undefined);
+  assert.equal(failed.report, null);
   assert.ok(failed.finishedAt);
   assert.equal((await api.get(`/investigations/${id}`)).status, 200);
 });
