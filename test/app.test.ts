@@ -4,11 +4,11 @@ import type { AddressInfo } from "node:net";
 import { after, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { AIMessage, fakeModel } from "langchain";
-import { createSreAgent } from "../src/agent.ts";
-import { createApp } from "../src/app.ts";
-import { getInvestigation } from "../src/investigations.ts";
-import { INVESTIGATION_PROMPT } from "../src/prompts.ts";
-import { createTools } from "../src/tools.ts";
+import { createSreAgent } from "../src/agent/agent.ts";
+import { createApp } from "../src/app/app.ts";
+import { investigations } from "../src/app/model/investigationModel.ts";
+import { INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
+import { createTools } from "../src/agent/tools.ts";
 import { fakeGateway } from "./helpers.ts";
 
 const gw = await fakeGateway();
@@ -33,7 +33,7 @@ async function serve(model: ReturnType<typeof fakeModel>) {
     get: (path: string) => fetch(`${url}${path}`),
     async finished(id: string) {
       for (let i = 0; i < 200; i++) {
-        const inv = await (await fetch(`${url}/investigations/${id}`)).json();
+        const { data: inv } = await (await fetch(`${url}/investigations/${id}`)).json();
         if (inv.status !== "running") return inv;
         await sleep(10);
       }
@@ -45,20 +45,23 @@ async function serve(model: ReturnType<typeof fakeModel>) {
 test("a bad body is a 400 with the reason, and starts nothing", async () => {
   const model = fakeModel();
   const api = await serve(model);
-  const cases: [unknown, RegExp][] = [
-    [{}, /tenantId/],
-    [{ ...start, tenantId: "" }, /tenantId/],
-    [{ ...start, cluster: 7 }, /cluster/],
-    [{ ...start, incidentId: "" }, /incidentId/],
-    [{ ...start, alert: [] }, /alert/],
-    [{ ...start, alert: "down" }, /alert/],
-    [{ ...start, namespace: "demo" }, /Unrecognized key: "namespace"/],
-    ['{"tenantId":', /JSON/],
+  // The reason is matched in the error as JSON: the field's name in fieldErrors, or the message.
+  const cases: [unknown, string, RegExp][] = [
+    [{}, "VALIDATION_ERROR", /"tenantId"/],
+    [{ ...start, tenantId: "" }, "VALIDATION_ERROR", /"tenantId"/],
+    [{ ...start, cluster: 7 }, "VALIDATION_ERROR", /"cluster"/],
+    [{ ...start, incidentId: "" }, "VALIDATION_ERROR", /"incidentId"/],
+    [{ ...start, alert: [] }, "VALIDATION_ERROR", /"alert"/],
+    [{ ...start, alert: "down" }, "VALIDATION_ERROR", /"alert"/],
+    [{ ...start, namespace: "demo" }, "VALIDATION_ERROR", /Unrecognized key: \\"namespace\\"/],
+    ['{"tenantId":', "INVALID_REQUEST_BODY", /JSON/],
   ];
-  for (const [body, reason] of cases) {
+  for (const [body, code, reason] of cases) {
     const res = await api.post(body);
     assert.equal(res.status, 400, JSON.stringify(body));
-    assert.match((await res.json()).error, reason);
+    const { success, error } = await res.json();
+    assert.deepEqual([success, error.code], [false, code], JSON.stringify(body));
+    assert.match(JSON.stringify(error), reason);
   }
   assert.equal(model.callCount, 0);
 });
@@ -72,8 +75,10 @@ test("a start answers 202 at once, the run goes on in the background, and the re
 
   const res = await api.post(start);
   assert.equal(res.status, 202);
-  const { id } = await res.json();
-  const running = await (await api.get(`/investigations/${id}`)).json();
+  const started = await res.json();
+  const { id } = started.data;
+  assert.deepEqual(started, { success: true, message: "Investigation started", data: { id } });
+  const { data: running } = await (await api.get(`/investigations/${id}`)).json();
   assert.deepEqual(running, {
     id,
     tenantId: "t_1",
@@ -91,7 +96,7 @@ test("a start answers 202 at once, the run goes on in the background, and the re
   assert.equal(gw.requests.at(-1)?.url, "/internal/tenants/t_1/clusters/prod-eu/ops");
   assert.match(model.calls[0]!.messages[1]!.text, /^Alert from cluster "prod-eu":\n.*KubePodCrashLooping/s);
   assert.deepEqual(
-    getInvestigation(id)!.messages.map((m) => m.type),
+    investigations.get(id)!.messages.map((m) => m.type),
     ["human", "ai", "tool", "ai"],
   );
 });
@@ -100,7 +105,7 @@ test("a run that fails is failed with its error, and the service keeps serving",
   const model = fakeModel().respond(new AIMessage({ content: "## Summary\nThe pods", response_metadata: { stop_reason: "max_tokens" } }));
   const api = await serve(model);
 
-  const { id } = await (await api.post(start)).json();
+  const { id } = (await (await api.post(start)).json()).data;
   const failed = await api.finished(id);
   assert.equal(failed.status, "failed");
   assert.equal(failed.error, "run ended without a report (stop reason: max_tokens)");
@@ -111,13 +116,13 @@ test("a run that fails is failed with its error, and the service keeps serving",
 
 test("an unknown investigation or route is a JSON 404", async () => {
   const api = await serve(fakeModel());
-  const cases: [string, string][] = [
-    ["/investigations/nope", "investigation not found"],
-    ["/nope", "not found"],
+  const cases: [string, string, string][] = [
+    ["/investigations/nope", "INVESTIGATION_NOT_FOUND", "Investigation not found"],
+    ["/nope", "ROUTE_NOT_FOUND", "Route not found"],
   ];
-  for (const [path, error] of cases) {
+  for (const [path, code, message] of cases) {
     const res = await api.get(path);
     assert.equal(res.status, 404);
-    assert.deepEqual(await res.json(), { error });
+    assert.deepEqual(await res.json(), { success: false, error: { code, message, details: null } });
   }
 });

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { AIMessage, type BaseMessage, fakeModel, HumanMessage, SystemMessage, ToolMessage } from "langchain";
-import { createSreAgent, runAgent } from "../src/agent.ts";
-import { INVESTIGATION_PROMPT } from "../src/prompts.ts";
-import { createTools } from "../src/tools.ts";
+import { createSreAgent, runAgent } from "../src/agent/agent.ts";
+import { INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
+import { createTools } from "../src/agent/tools.ts";
 import { fakeGateway } from "./helpers.ts";
 
 const gw = await fakeGateway();

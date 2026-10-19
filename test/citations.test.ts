@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { AIMessage, ToolMessage } from "langchain";
-import { citationProblems } from "../src/citations.ts";
+import { citationProblems } from "../src/agent/citations.ts";
 
 const transcript = [
   new AIMessage({ content: "", tool_calls: [{ name: "list_pods", args: { namespace: "demo", labelSelector: "app=api" }, id: "1" }] }),

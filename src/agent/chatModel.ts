@@ -1,6 +1,6 @@
 import { ChatAnthropic } from "@langchain/anthropic";
 import { ChatOpenAI } from "@langchain/openai";
-import type { ModelConfig } from "./config.ts";
+import type { ModelConfig } from "../config.ts";
 
 // LangChain's default is 6; 2 is the Anthropic SDK's own default.
 const MAX_RETRIES = 2;

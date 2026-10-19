@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { BaseMessage } from "langchain";
-import { runAgent, type SreAgent } from "./agent.ts";
-import { log } from "./log.ts";
-import { alertMessage } from "./prompts.ts";
+import { runAgent, type SreAgent } from "../../agent/agent.ts";
+import { log } from "../../log.ts";
+import { alertMessage } from "../../agent/prompts.ts";
+import type { StartInvestigationBody } from "../schemas/investigation.schema.ts";
+import { fail, ok } from "../types/serviceResponse.ts";
 
 export type Investigation = {
   id: string;
@@ -18,17 +20,22 @@ export type Investigation = {
   finishedAt?: string;
 };
 
-export type StartInput = { tenantId: string; cluster: string; incidentId?: string; alert: Record<string, unknown> };
-
 // shortcut: in memory, so a restart forgets every run; Postgres in 5b.
-const investigations = new Map<string, Investigation>();
+export const investigations = new Map<string, Investigation>();
 
-export function getInvestigation(id: string): Investigation | undefined {
-  return investigations.get(id);
-}
+export const getInvestigationService = (id: string) => {
+  const inv = investigations.get(id);
+  if (!inv) return fail(404, "INVESTIGATION_NOT_FOUND", "Investigation not found");
+  const { messages, ...rest } = inv;
+  return ok(rest);
+};
 
 // Starts the run in the background and returns at once; the run updates the investigation as it goes.
-export function startInvestigation(agent: SreAgent, model: string, { tenantId, cluster, incidentId, alert }: StartInput): Investigation {
+export const startInvestigationService = (
+  agent: SreAgent,
+  model: string,
+  { tenantId, cluster, incidentId, alert }: StartInvestigationBody,
+) => {
   const inv: Investigation = {
     id: randomUUID(),
     tenantId,
@@ -55,5 +62,5 @@ export function startInvestigation(agent: SreAgent, model: string, { tenantId, c
       inv.finishedAt = new Date().toISOString();
       log("info", "investigation finished", { id: inv.id, status: inv.status, steps: inv.messages.length - 1 });
     });
-  return inv;
-}
+  return ok({ id: inv.id });
+};

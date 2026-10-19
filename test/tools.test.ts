@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { ToolInputParsingException } from "@langchain/core/tools";
-import { createTools } from "../src/tools.ts";
+import { createTools } from "../src/agent/tools.ts";
 import { fakeGateway } from "./helpers.ts";
 
 const gw = await fakeGateway();

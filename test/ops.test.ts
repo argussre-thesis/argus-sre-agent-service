@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, test } from "node:test";
-import { callOp } from "../src/ops.ts";
+import { callOp } from "../src/agent/ops.ts";
 import { fakeGateway } from "./helpers.ts";
 
 const gw = await fakeGateway();

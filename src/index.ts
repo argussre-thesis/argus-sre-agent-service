@@ -1,10 +1,10 @@
-import { createSreAgent } from "./agent.ts";
-import { createApp } from "./app.ts";
+import { createSreAgent } from "./agent/agent.ts";
+import { createApp } from "./app/app.ts";
 import { loadConfig, type Config } from "./config.ts";
 import { log } from "./log.ts";
-import { chatModel } from "./model.ts";
-import { INVESTIGATION_PROMPT } from "./prompts.ts";
-import { createTools } from "./tools.ts";
+import { chatModel } from "./agent/chatModel.ts";
+import { INVESTIGATION_PROMPT } from "./agent/prompts.ts";
+import { createTools } from "./agent/tools.ts";
 
 let config: Config;
 try {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { ChatOpenAI } from "@langchain/openai";
-import { chatModel } from "../src/model.ts";
+import { chatModel } from "../src/agent/chatModel.ts";
 
 // The constructors only check that a key is set; nothing here calls a model.
 process.env.ANTHROPIC_API_KEY ??= "test";

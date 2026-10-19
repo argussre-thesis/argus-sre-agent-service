@@ -12,7 +12,7 @@ import {
 } from "langchain";
 import * as z from "zod";
 import { citationProblems } from "./citations.ts";
-import { log } from "./log.ts";
+import { log } from "../log.ts";
 import type { OpsContext } from "./ops.ts";
 import type { createTools } from "./tools.ts";
 

@@ -1,11 +1,11 @@
 // One real investigation from the command line, before the HTTP API (step 5): each step as it happens, then the report.
 // Needs the dev gateway (`npm run dev:gateway` in argus-sre-runner/) and the runner in minikube. Costs tokens.
 import { AIMessage, HumanMessage, ToolMessage } from "langchain";
-import { createSreAgent, runAgent } from "../src/agent.ts";
+import { createSreAgent, runAgent } from "../src/agent/agent.ts";
 import { loadConfig } from "../src/config.ts";
-import { chatModel } from "../src/model.ts";
-import { alertMessage, INVESTIGATION_PROMPT } from "../src/prompts.ts";
-import { createTools } from "../src/tools.ts";
+import { chatModel } from "../src/agent/chatModel.ts";
+import { alertMessage, INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
+import { createTools } from "../src/agent/tools.ts";
 
 // Shaped like an Alertmanager webhook alert from kube-prometheus' KubePodCrashLooping rule.
 const alert = {
