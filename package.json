@@ -16,6 +16,7 @@
     "start": "node src/index.ts",
     "dev": "node --env-file-if-exists=.env src/index.ts",
     "investigate": "node --env-file-if-exists=.env dev/investigate.ts",
+    "continue": "node --env-file-if-exists=.env dev/continue.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --env-file-if-exists=.env --test \"test/**/*.test.ts\""
   },
