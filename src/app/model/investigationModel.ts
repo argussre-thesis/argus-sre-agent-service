@@ -1,5 +1,5 @@
 import { mapChatMessagesToStoredMessages } from "@langchain/core/messages";
-import type { BaseMessage } from "langchain";
+import { AIMessage, type BaseMessage } from "langchain";
 import { runAgent } from "../../agent/agent.ts";
 import { alertMessage } from "../../agent/prompts.ts";
 import { log } from "../../log.ts";
@@ -9,12 +9,28 @@ import type { Prisma } from "../prisma/generated/prisma/client.ts";
 import type { StartInvestigationBody } from "../schemas/investigation.schema.ts";
 import { fail, ok } from "../types/serviceResponse.ts";
 
+// LangChain's usage, the same for every provider. Its input_tokens include the cached ones.
+const usage = (m: BaseMessage, model: string) => {
+  const u = AIMessage.isInstance(m) ? m.usage_metadata : undefined;
+  if (!u) return {};
+  const cacheRead = u.input_token_details?.cache_read ?? 0;
+  const cacheWrite = u.input_token_details?.cache_creation ?? 0;
+  return {
+    model,
+    uncachedInputTokens: u.input_tokens - cacheRead - cacheWrite,
+    cacheWriteTokens: cacheWrite,
+    cacheReadTokens: cacheRead,
+    outputTokens: u.output_tokens,
+  };
+};
+
 // LangChain's stored form ({ type, data }), which mapStoredMessagesToChatMessages turns back into messages.
 // It is plain JSON; the cast is only because its interfaces lack the index signature Prisma's JSON type wants.
-const messageRows = (messages: BaseMessage[], firstSeq: number) =>
+const messageRows = (messages: BaseMessage[], firstSeq: number, model: string) =>
   mapChatMessagesToStoredMessages(messages).map((data, i) => ({
     seq: firstSeq + i,
     data: data as unknown as Prisma.InputJsonObject,
+    ...usage(messages[i]!, model),
   }));
 
 export const getInvestigationService = async (id: string) => {
@@ -32,7 +48,7 @@ export const startInvestigationService = async (
 ) => {
   const messages = [alertMessage(cluster, alert)];
   const { id } = await prisma.investigation.create({
-    data: { tenantId, cluster, incidentId, model, systemPrompt, messages: { create: messageRows(messages, 0) } },
+    data: { tenantId, cluster, incidentId, model, systemPrompt, messages: { create: messageRows(messages, 0, model) } },
     select: { id: true },
   });
   log("info", "investigation started", { id, tenantId, cluster, incidentId });
@@ -40,7 +56,7 @@ export const startInvestigationService = async (
   let seq = messages.length;
   // Nothing awaits this promise, so it must never reject: Node 24 exits on an unhandled rejection.
   runAgent(agent, messages, { tenantId, cluster }, async (added) => {
-    await prisma.message.createMany({ data: messageRows(added, seq).map((row) => ({ ...row, investigationId: id })) });
+    await prisma.message.createMany({ data: messageRows(added, seq, model).map((row) => ({ ...row, investigationId: id })) });
     seq += added.length;
   })
     .then(

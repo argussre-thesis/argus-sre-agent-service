@@ -79,9 +79,24 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
 
 test("a start answers 202 at once, the run goes on in the background, and the report is polled", async () => {
   const release = gw.hold();
+  // Usage as LangChain gives it (input_tokens include the cached ones), from a real run.
+  const usage = (input: number, cacheRead: number, cacheWrite: number, output: number) => ({
+    input_tokens: input,
+    output_tokens: output,
+    total_tokens: input + output,
+    input_token_details: { cache_read: cacheRead, cache_creation: cacheWrite },
+  });
   const model = fakeModel()
-    .respond(new AIMessage({ content: "", tool_calls: [{ name: "list_pods", args: { namespace: "demo" }, id: "call_1" }] }))
-    .respond(new AIMessage({ content: report, response_metadata: { stop_reason: "end_turn" } }));
+    .respond(
+      new AIMessage({
+        content: "",
+        tool_calls: [{ name: "list_pods", args: { namespace: "demo" }, id: "call_1" }],
+        usage_metadata: usage(1561, 0, 0, 100),
+      }),
+    )
+    .respond(
+      new AIMessage({ content: report, response_metadata: { stop_reason: "end_turn" }, usage_metadata: usage(5081, 3588, 1489, 2011) }),
+    );
   const api = await serve(model);
 
   const res = await api.post(start);
@@ -118,6 +133,16 @@ test("a start answers 202 at once, the run goes on in the background, and the re
     ["human", "ai", "tool", "ai"],
   );
   assert.equal(messages.at(-1)!.text, report);
+  // Tokens on the AI messages only, in four parts that don't overlap.
+  assert.deepEqual(
+    row.messages.map((m) => [m.model, m.uncachedInputTokens, m.cacheWriteTokens, m.cacheReadTokens, m.outputTokens]),
+    [
+      [null, null, null, null, null],
+      ["fake:model", 1561, 0, 0, 100],
+      [null, null, null, null, null],
+      ["fake:model", 4, 1489, 3588, 2011],
+    ],
+  );
 });
 
 test("a run that fails is failed with its error, and the service keeps serving", async () => {

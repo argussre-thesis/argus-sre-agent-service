@@ -27,11 +27,16 @@ model Investigation {
 
 // One message of the conversation, as LangChain stores it. seq is its position: 0 is the alert.
 model Message {
-  investigationId String        @map("investigation_id")
-  seq             Int
-  data            Json
-  createdAt       DateTime      @default(now()) @map("created_at")
-  investigation   Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  investigationId     String        @map("investigation_id")
+  seq                 Int
+  data                Json
+  model               String?
+  uncachedInputTokens Int?          @map("uncached_input_tokens")
+  cacheWriteTokens    Int?          @map("cache_write_tokens")
+  cacheReadTokens     Int?          @map("cache_read_tokens")
+  outputTokens        Int?          @map("output_tokens")
+  createdAt           DateTime      @default(now()) @map("created_at")
+  investigation       Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
 
   @@id([investigationId, seq])
   @@map("message")
