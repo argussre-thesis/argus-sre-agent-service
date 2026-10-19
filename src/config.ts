@@ -17,6 +17,7 @@ const common = z.object({
   PORT: z.coerce.number().int().positive().default(8090),
   OPS_URL: z.url({ protocol: /^https?$/ }).default("http://127.0.0.1:8081"),
   MAX_MODEL_CALLS: z.coerce.number().int().positive().default(30),
+  DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
 });
 
 const envSchema = z.discriminatedUnion("MODEL_PROVIDER", [
