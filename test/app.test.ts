@@ -123,7 +123,7 @@ test("a start answers 202 at once, the run goes on in the background, and the re
   assert.deepEqual(done, { ...running, status: "done", report, finishedAt: done.finishedAt });
   assert.ok(done.startedAt <= done.finishedAt);
   assert.equal(gw.requests.at(-1)?.url, "/internal/tenants/t_1/clusters/prod-eu/ops");
-  assert.match(model.calls[0]!.messages[1]!.text, /^Alert from cluster "prod-eu":\n.*KubePodCrashLooping/s);
+  assert.match(model.calls[0]!.messages[1]!.text, /^Current time: \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\nAlert from cluster "prod-eu":\n.*KubePodCrashLooping/s);
   // Stored with the prompt it ran with, and every message in order, loadable as LangChain messages again.
   const row = await prisma.investigation.findUniqueOrThrow({ where: { id }, include: { messages: { orderBy: { seq: "asc" } } } });
   assert.equal(row.systemPrompt, INVESTIGATION_PROMPT);
