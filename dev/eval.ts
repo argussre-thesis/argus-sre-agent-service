@@ -13,7 +13,7 @@ if (unknown.length > 0) {
 }
 
 for (const s of scenarios.filter((s) => names.length === 0 || names.includes(s.name))) {
-  const res = await fetch(`${url}/tenants/t_dev/investigations`, {
+  const res = await fetch(`${url}/api/v1/tenants/t_dev/investigations`, {
     method: "POST",
     headers: { authorization, "content-type": "application/json" },
     // incidentId marks eval runs in the database.
@@ -30,7 +30,7 @@ for (const s of scenarios.filter((s) => names.length === 0 || names.includes(s.n
   let inv;
   do {
     await setTimeout(2000);
-    inv = (await (await fetch(`${url}/tenants/t_dev/investigations/${started.data.id}`, { headers: { authorization } })).json()).data;
+    inv = (await (await fetch(`${url}/api/v1/tenants/t_dev/investigations/${started.data.id}`, { headers: { authorization } })).json()).data;
   } while (inv.status === "running");
 
   const secs = (Date.parse(inv.finishedAt) - Date.parse(inv.startedAt)) / 1000;

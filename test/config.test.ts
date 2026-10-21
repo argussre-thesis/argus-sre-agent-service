@@ -8,6 +8,7 @@ const required = { ANTHROPIC_API_KEY: "k", DATABASE_URL, INTERNAL_API_TOKEN };
 
 test("defaults with only an Anthropic key", () => {
   const defaults = {
+    host: "127.0.0.1",
     port: 8090,
     opsUrl: "http://127.0.0.1:8081",
     model: { provider: "anthropic", name: "claude-opus-5-5", effort: "high" },
@@ -16,13 +17,14 @@ test("defaults with only an Anthropic key", () => {
   };
   assert.deepEqual(loadConfig(required), defaults);
   // `KEY=` lines in a .env file count as unset.
-  const empty = { PORT: "", OPS_URL: "", MODEL_PROVIDER: "", ANTHROPIC_MODEL: "", MODEL_EFFORT: "", MAX_MODEL_CALLS: "" };
+  const empty = { HOST: "", PORT: "", OPS_URL: "", MODEL_PROVIDER: "", ANTHROPIC_MODEL: "", MODEL_EFFORT: "", MAX_MODEL_CALLS: "" };
   assert.deepEqual(loadConfig({ ...required, ...empty }), defaults);
 });
 
 test("set values are used", () => {
   const env = {
     ...required,
+    HOST: "0.0.0.0",
     PORT: "9000",
     OPS_URL: "https://gateway.internal:8081",
     ANTHROPIC_MODEL: "claude-haiku-5-5",
@@ -30,6 +32,7 @@ test("set values are used", () => {
     MAX_MODEL_CALLS: "10",
   };
   assert.deepEqual(loadConfig(env), {
+    host: "0.0.0.0",
     port: 9000,
     opsUrl: "https://gateway.internal:8081",
     model: { provider: "anthropic", name: "claude-haiku-5-5", effort: "low" },

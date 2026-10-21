@@ -45,10 +45,10 @@ async function serve(model: ReturnType<typeof fakeModel>) {
   await once(server, "listening");
   after(() => new Promise((resolve) => server.close(resolve)));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const get = (path: string, tenantId = tenant) => fetch(`${url}/tenants/${tenantId}/investigations${path}`, { headers: auth });
+  const get = (path: string, tenantId = tenant) => fetch(`${url}/api/v1/tenants/${tenantId}/investigations${path}`, { headers: auth });
   return {
     async post(body: unknown, headers: Record<string, string> = auth) {
-      const res = await fetch(`${url}/tenants/${tenant}/investigations`, {
+      const res = await fetch(`${url}/api/v1/tenants/${tenant}/investigations`, {
         method: "POST",
         headers: { ...headers, "content-type": "application/json" },
         body: typeof body === "string" ? body : JSON.stringify(body),
@@ -248,8 +248,8 @@ test("an incident's investigations are listed newest first, and every read is sc
 test("an unknown investigation or route is a JSON 404", async () => {
   const api = await serve(fakeModel());
   const cases: [string, string, string][] = [
-    [`${api.url}/tenants/${tenant}/investigations/nope`, "INVESTIGATION_NOT_FOUND", "Investigation not found"],
-    [`${api.url}/tenants/${tenant}/investigations/nope/messages`, "INVESTIGATION_NOT_FOUND", "Investigation not found"],
+    [`${api.url}/api/v1/tenants/${tenant}/investigations/nope`, "INVESTIGATION_NOT_FOUND", "Investigation not found"],
+    [`${api.url}/api/v1/tenants/${tenant}/investigations/nope/messages`, "INVESTIGATION_NOT_FOUND", "Investigation not found"],
     [`${api.url}/investigations/nope`, "ROUTE_NOT_FOUND", "Route not found"],
   ];
   for (const [url, code, message] of cases) {
@@ -269,7 +269,7 @@ test("without the internal token every route is a 401, and nothing starts", asyn
     assert.equal(res.status, 401, JSON.stringify(h));
     assert.deepEqual(await res.json(), unauthorized);
   }
-  for (const path of [`/tenants/${tenant}/investigations?incidentId=inc_1`, "/nope"]) {
+  for (const path of [`/api/v1/tenants/${tenant}/investigations?incidentId=inc_1`, "/nope"]) {
     const res = await fetch(`${api.url}${path}`);
     assert.equal(res.status, 401, path);
   }

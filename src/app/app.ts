@@ -12,7 +12,7 @@ export function createApp(deps: AppDeps) {
   app.use(requireInternalToken(deps.internalApiToken));
   app.use(express.json({ limit: "1mb" }));
 
-  app.use("api/v1/tenants/:tenantId/investigations", investigationRoutes(deps));
+  app.use("/api/v1/tenants/:tenantId/investigations", investigationRoutes(deps));
 
   app.use((_req, res) => {
     errorResponse(res, 404, "ROUTE_NOT_FOUND", "Route not found");

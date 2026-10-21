@@ -34,10 +34,17 @@ createApp({
   effort,
   systemPrompt: INVESTIGATION_PROMPT,
   internalApiToken: config.internalApiToken,
-}).listen(config.port, "127.0.0.1", (err) => {
+}).listen(config.port, config.host, (err) => {
   if (err) {
-    log("error", "cannot listen", { port: config.port, error: err.message });
+    log("error", "cannot listen", { host: config.host, port: config.port, error: err.message });
     process.exit(1);
   }
-  log("info", "agent service listening", { url: `http://127.0.0.1:${config.port}`, opsUrl: config.opsUrl, model: config.model });
+  log("info", "agent service listening", { url: `http://${config.host}:${config.port}`, opsUrl: config.opsUrl, model: config.model });
 });
+
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.once(signal, () => {
+    log("info", "shutting down", { signal });
+    process.exit(0);
+  });
+}

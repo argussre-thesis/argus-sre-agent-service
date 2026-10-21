@@ -11,6 +11,7 @@ export type ModelConfig =
   | { provider: "openai"; name: string; effort?: OpenAIEffort };
 
 export interface Config {
+  host: string;
   port: number;
   opsUrl: string;
   model: ModelConfig;
@@ -19,6 +20,7 @@ export interface Config {
 }
 
 const common = z.object({
+  HOST: z.string().default("127.0.0.1"),
   PORT: z.coerce.number().int().positive().default(8090),
   OPS_URL: z.url({ protocol: /^https?$/ }).default("http://127.0.0.1:8081"),
   MAX_MODEL_CALLS: z.coerce.number().int().positive().default(30),
@@ -48,6 +50,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
   const e = parsed.data;
   return {
+    host: e.HOST,
     port: e.PORT,
     opsUrl: e.OPS_URL,
     model:
