@@ -9,7 +9,7 @@ const TIMEOUT_MS = 10 * 60_000;
 // Thinking counts toward it. LangChain picks 16k for model names it knows, 4k for ones it doesn't.
 const MAX_TOKENS = 16_384;
 
-// The only place a provider is imported: `name` is recorded with each conversation.
+// The only place a provider is imported: `name` and `effort` are recorded with each conversation.
 export function chatModel(m: ModelConfig) {
   const name = `${m.provider}:${m.name}`;
   if (m.provider === "anthropic") {
@@ -20,9 +20,17 @@ export function chatModel(m: ModelConfig) {
       maxRetries: MAX_RETRIES,
       clientOptions: { timeout: TIMEOUT_MS },
     });
-    return { name, model };
+    return { name, model, effort: m.effort };
   }
 
-  const model = new ChatOpenAI({ model: m.name, useResponsesApi: true, maxRetries: MAX_RETRIES, timeout: TIMEOUT_MS });
-  return { name, model };
+  const model = new ChatOpenAI({
+    model: m.name,
+    useResponsesApi: true,
+    ...(m.effort && { reasoning: { effort: m.effort } }),
+    maxRetries: MAX_RETRIES,
+    timeout: TIMEOUT_MS,
+  });
+
+  const params = model.invocationParams({});
+  return { name, model, effort: "reasoning" in params ? (params.reasoning?.effort ?? null) : null };
 }

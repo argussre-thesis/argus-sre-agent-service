@@ -24,10 +24,17 @@ try {
   process.exit(1);
 }
 
-const { name, model } = chatModel(config.model);
+const { name, model, effort } = chatModel(config.model);
+if (config.model.effort && !effort) log("warn", "MODEL_EFFORT ignored: this model takes no effort", { model: name });
 const agent = createSreAgent(model, INVESTIGATION_PROMPT, createTools(config.opsUrl), config.maxModelCalls);
 
-createApp({ agent, model: name, systemPrompt: INVESTIGATION_PROMPT, internalApiToken: config.internalApiToken }).listen(config.port, "127.0.0.1", (err) => {
+createApp({
+  agent,
+  model: name,
+  effort,
+  systemPrompt: INVESTIGATION_PROMPT,
+  internalApiToken: config.internalApiToken,
+}).listen(config.port, "127.0.0.1", (err) => {
   if (err) {
     log("error", "cannot listen", { port: config.port, error: err.message });
     process.exit(1);

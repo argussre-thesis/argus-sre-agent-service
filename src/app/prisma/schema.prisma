@@ -14,6 +14,7 @@ model Investigation {
   cluster      String
   incidentId   String             @map("incident_id")
   model        String
+  effort       String?
   systemPrompt String              @map("system_prompt")
   status       InvestigationStatus @default(running)
   report       String?

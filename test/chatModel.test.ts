@@ -32,3 +32,14 @@ test("OpenAI: nothing but the model name, same retries and timeout", () => {
   assert.equal(model.caller["maxRetries"], 2);
   assert.equal(model.timeout, 600_000);
 });
+
+test("OpenAI: an effort is sent as reasoning.effort, and reported only when sent", () => {
+  const reasoning = chatModel({ provider: "openai", name: "gpt-5-mini", effort: "low" });
+  assert.deepEqual(JSON.parse(JSON.stringify(reasoning.model.invocationParams({}))).reasoning, { effort: "low" });
+  assert.equal(reasoning.effort, "low");
+  // Not a reasoning model: LangChain sends no effort.
+  const plain = chatModel({ provider: "openai", name: "gpt-4o-mini", effort: "low" });
+  assert.equal(JSON.parse(JSON.stringify(plain.model.invocationParams({}))).reasoning, undefined);
+  assert.equal(plain.effort, null);
+  assert.equal(chatModel({ provider: "openai", name: "gpt-5-mini" }).effort, null);
+});

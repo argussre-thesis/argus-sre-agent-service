@@ -38,12 +38,14 @@ test("set values are used", () => {
   });
 });
 
-test("openai needs its key and model, and has no effort", () => {
-  assert.throws(() => loadConfig({ MODEL_PROVIDER: "openai", OPENAI_API_KEY: "k", DATABASE_URL, INTERNAL_API_TOKEN }), /OPENAI_MODEL/);
-  assert.deepEqual(loadConfig({ MODEL_PROVIDER: "openai", OPENAI_API_KEY: "k", OPENAI_MODEL: "m", DATABASE_URL, INTERNAL_API_TOKEN }).model, {
-    provider: "openai",
-    name: "m",
-  });
+test("openai needs its key and model; its effort is optional, with OpenAI's values", () => {
+  const openai = { MODEL_PROVIDER: "openai", OPENAI_API_KEY: "k", OPENAI_MODEL: "m", DATABASE_URL, INTERNAL_API_TOKEN };
+  assert.throws(() => loadConfig({ ...openai, OPENAI_MODEL: "" }), /OPENAI_MODEL/);
+  assert.deepEqual(loadConfig(openai).model, { provider: "openai", name: "m" });
+  assert.deepEqual(loadConfig({ ...openai, MODEL_EFFORT: "minimal" }).model, { provider: "openai", name: "m", effort: "minimal" });
+  assert.throws(() => loadConfig({ ...openai, MODEL_EFFORT: "fast" }), /at MODEL_EFFORT/);
+  // "minimal" is OpenAI's, not Claude's.
+  assert.throws(() => loadConfig({ ...required, MODEL_EFFORT: "minimal" }), /at MODEL_EFFORT/);
 });
 
 test("bad values are rejected", () => {

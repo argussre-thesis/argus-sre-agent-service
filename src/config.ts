@@ -2,9 +2,13 @@ import * as z from "zod";
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type Effort = (typeof EFFORTS)[number];
+export const OPENAI_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type OpenAIEffort = (typeof OPENAI_EFFORTS)[number];
 
-// OpenAI has no effort setting here: it runs on its defaults.
-export type ModelConfig = { provider: "anthropic"; name: string; effort: Effort } | { provider: "openai"; name: string };
+// Optional for OpenAI: only its reasoning models take an effort, and which values depends on the model.
+export type ModelConfig =
+  | { provider: "anthropic"; name: string; effort: Effort }
+  | { provider: "openai"; name: string; effort?: OpenAIEffort };
 
 export interface Config {
   port: number;
@@ -33,6 +37,7 @@ const envSchema = z.discriminatedUnion("MODEL_PROVIDER", [
     MODEL_PROVIDER: z.literal("openai"),
     OPENAI_API_KEY: z.string(),
     OPENAI_MODEL: z.string(),
+    MODEL_EFFORT: z.enum(OPENAI_EFFORTS).optional(),
   }),
 ]);
 
@@ -48,7 +53,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     model:
       e.MODEL_PROVIDER === "anthropic"
         ? { provider: "anthropic", name: e.ANTHROPIC_MODEL, effort: e.MODEL_EFFORT }
-        : { provider: "openai", name: e.OPENAI_MODEL },
+        : { provider: "openai", name: e.OPENAI_MODEL, ...(e.MODEL_EFFORT && { effort: e.MODEL_EFFORT }) },
     maxModelCalls: e.MAX_MODEL_CALLS,
     internalApiToken: e.INTERNAL_API_TOKEN,
   };

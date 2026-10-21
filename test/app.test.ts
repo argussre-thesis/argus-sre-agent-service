@@ -41,7 +41,7 @@ const toolCallReply = () =>
 
 async function serve(model: ReturnType<typeof fakeModel>) {
   const agent = createSreAgent(model, INVESTIGATION_PROMPT, createTools(gw.url), 30);
-  const server = createApp({ agent, model: "fake:model", systemPrompt: INVESTIGATION_PROMPT, internalApiToken: token }).listen(0, "127.0.0.1");
+  const server = createApp({ agent, model: "fake:model", effort: "low", systemPrompt: INVESTIGATION_PROMPT, internalApiToken: token }).listen(0, "127.0.0.1");
   await once(server, "listening");
   after(() => new Promise((resolve) => server.close(resolve)));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -134,6 +134,7 @@ test("a start answers 202 at once, the run goes on in the background, and the re
     cluster: "prod-eu",
     incidentId: "inc_1",
     model: "fake:model",
+    effort: "low",
     status: "running",
     report: null,
     error: null,

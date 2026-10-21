@@ -5,8 +5,7 @@ import { requireInternalToken } from "./middleware/internalAuth.ts";
 import investigationRoutes from "./routes/investigation.route.ts";
 import { errorResponse } from "./utils/responseHandler.ts";
 
-// The model name and system prompt are the agent's, stored with each investigation.
-export type AppDeps = { agent: SreAgent; model: string; systemPrompt: string; internalApiToken: string };
+export type AppDeps = { agent: SreAgent; model: string; effort: string | null; systemPrompt: string; internalApiToken: string };
 
 export function createApp(deps: AppDeps) {
   const app = express();

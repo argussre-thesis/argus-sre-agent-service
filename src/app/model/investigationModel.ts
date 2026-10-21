@@ -65,7 +65,7 @@ export const getInvestigationMessagesService = async (tenantId: string, id: stri
 
 // Saves the investigation with its incident, then runs it in the background: each step's messages are saved as they come.
 export const startInvestigationService = async (
-  { agent, model, systemPrompt }: AppDeps,
+  { agent, model, effort, systemPrompt }: AppDeps,
   tenantId: string,
   { incidentId, cluster, title, alerts }: StartInvestigationBody,
 ) => {
@@ -77,7 +77,7 @@ export const startInvestigationService = async (
     if (running) return fail(409, "INVESTIGATION_RUNNING", "This incident already has a running investigation", running);
     return ok(
       await tx.investigation.create({
-        data: { tenantId, cluster, incidentId, model, systemPrompt, messages: { create: messageRows(messages, 0, model) } },
+        data: { tenantId, cluster, incidentId, model, effort, systemPrompt, messages: { create: messageRows(messages, 0, model) } },
         select: { id: true },
       }),
     );
