@@ -12,7 +12,7 @@ model Investigation {
   id           String              @id @default(cuid())
   tenantId     String              @map("tenant_id")
   cluster      String
-  incidentId   String?             @map("incident_id")
+  incidentId   String             @map("incident_id")
   model        String
   systemPrompt String              @map("system_prompt")
   status       InvestigationStatus @default(running)
@@ -22,6 +22,7 @@ model Investigation {
   finishedAt   DateTime?           @map("finished_at")
   messages     Message[]
 
+  @@index([tenantId, incidentId])
   @@map("investigation")
 }
 

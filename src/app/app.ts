@@ -11,7 +11,7 @@ export function createApp(deps: AppDeps) {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
 
-  app.use("/investigations", investigationRoutes(deps));
+  app.use("/tenants/:tenantId/investigations", investigationRoutes(deps));
 
   app.use((_req, res) => {
     errorResponse(res, 404, "ROUTE_NOT_FOUND", "Route not found");

@@ -12,11 +12,16 @@ if (unknown.length > 0) {
 }
 
 for (const s of scenarios.filter((s) => names.length === 0 || names.includes(s.name))) {
-  const res = await fetch(`${url}/investigations`, {
+  const res = await fetch(`${url}/tenants/t_dev/investigations`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     // incidentId marks eval runs in the database.
-    body: JSON.stringify({ tenantId: "t_dev", cluster: "minikube", incidentId: `eval-${s.name}`, alert: { ...s.alert, startsAt: new Date().toISOString() } }),
+    body: JSON.stringify({
+      incidentId: `eval-${s.name}`,
+      cluster: "minikube",
+      title: (s.alert.annotations as { summary: string }).summary,
+      alerts: [{ ...s.alert, startsAt: new Date().toISOString() }],
+    }),
   });
   const started = await res.json();
   if (!res.ok) throw new Error(`POST /investigations: ${res.status} ${JSON.stringify(started)}`);
@@ -24,7 +29,7 @@ for (const s of scenarios.filter((s) => names.length === 0 || names.includes(s.n
   let inv;
   do {
     await setTimeout(2000);
-    inv = (await (await fetch(`${url}/investigations/${started.data.id}`)).json()).data;
+    inv = (await (await fetch(`${url}/tenants/t_dev/investigations/${started.data.id}`)).json()).data;
   } while (inv.status === "running");
 
   const secs = (Date.parse(inv.finishedAt) - Date.parse(inv.startedAt)) / 1000;

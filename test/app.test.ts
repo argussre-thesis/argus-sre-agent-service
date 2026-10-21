@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { after, test } from "node:test";
@@ -22,8 +23,18 @@ after(async () => {
   await prisma.$disconnect();
 });
 
-const start = { tenantId: "t_1", cluster: "prod-eu", incidentId: "inc_1", alert: { labels: { alertname: "KubePodCrashLooping" } } };
+// A tenant of its own per test run, so rows left by an earlier run can't get in the way.
+const tenant = `t_${randomUUID()}`;
+const start = {
+  incidentId: "inc_1",
+  cluster: "prod-eu",
+  title: "Pod is crash looping.",
+  alerts: [{ labels: { alertname: "KubePodCrashLooping" } }],
+};
 const report = '## Summary\nx\n## Evidence\n- No pods `list_pods {"namespace":"demo"}`';
+const reportReply = () => new AIMessage({ content: report, response_metadata: { stop_reason: "end_turn" } });
+const toolCallReply = () =>
+  new AIMessage({ content: "", tool_calls: [{ name: "list_pods", args: { namespace: "demo" }, id: "call_1" }] });
 
 async function serve(model: ReturnType<typeof fakeModel>) {
   const agent = createSreAgent(model, INVESTIGATION_PROMPT, createTools(gw.url), 30);
@@ -31,9 +42,10 @@ async function serve(model: ReturnType<typeof fakeModel>) {
   await once(server, "listening");
   after(() => new Promise((resolve) => server.close(resolve)));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const get = (path: string, tenantId = tenant) => fetch(`${url}/tenants/${tenantId}/investigations${path}`);
   return {
     async post(body: unknown) {
-      const res = await fetch(`${url}/investigations`, {
+      const res = await fetch(`${url}/tenants/${tenant}/investigations`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: typeof body === "string" ? body : JSON.stringify(body),
@@ -41,10 +53,11 @@ async function serve(model: ReturnType<typeof fakeModel>) {
       if (res.status === 202) started.push((await res.clone().json()).data.id);
       return res;
     },
-    get: (path: string) => fetch(`${url}${path}`),
+    get,
+    url,
     async finished(id: string) {
       for (let i = 0; i < 200; i++) {
-        const { data: inv } = await (await fetch(`${url}/investigations/${id}`)).json();
+        const { data: inv } = await (await get(`/${id}`)).json();
         if (inv.status !== "running") return inv;
         await sleep(10);
       }
@@ -58,14 +71,15 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
   const api = await serve(model);
   // The reason is matched in the error as JSON: the field's name in fieldErrors, or the message.
   const cases: [unknown, string, RegExp][] = [
-    [{}, "VALIDATION_ERROR", /"tenantId"/],
-    [{ ...start, tenantId: "" }, "VALIDATION_ERROR", /"tenantId"/],
-    [{ ...start, cluster: 7 }, "VALIDATION_ERROR", /"cluster"/],
+    [{}, "VALIDATION_ERROR", /"incidentId"/],
     [{ ...start, incidentId: "" }, "VALIDATION_ERROR", /"incidentId"/],
-    [{ ...start, alert: [] }, "VALIDATION_ERROR", /"alert"/],
-    [{ ...start, alert: "down" }, "VALIDATION_ERROR", /"alert"/],
-    [{ ...start, namespace: "demo" }, "VALIDATION_ERROR", /Unrecognized key: \\"namespace\\"/],
-    ['{"tenantId":', "INVALID_REQUEST_BODY", /JSON/],
+    [{ ...start, cluster: 7 }, "VALIDATION_ERROR", /"cluster"/],
+    [{ ...start, title: "" }, "VALIDATION_ERROR", /"title"/],
+    [{ ...start, alerts: [] }, "VALIDATION_ERROR", /"alerts"/],
+    [{ ...start, alerts: "down" }, "VALIDATION_ERROR", /"alerts"/],
+    [{ ...start, alerts: [[]] }, "VALIDATION_ERROR", /"alerts"/],
+    [{ ...start, tenantId: "t_2" }, "VALIDATION_ERROR", /Unrecognized key: \\"tenantId\\"/],
+    ['{"incidentId":', "INVALID_REQUEST_BODY", /JSON/],
   ];
   for (const [body, code, reason] of cases) {
     const res = await api.post(body);
@@ -77,7 +91,7 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
   assert.equal(model.callCount, 0);
 });
 
-test("a start answers 202 at once, the run goes on in the background, and the report is polled", async () => {
+test("a start answers 202 at once, the run goes on in the background, and the report and transcript are read", async () => {
   const release = gw.hold();
   // Usage as LangChain gives it (input_tokens include the cached ones), from a real run.
   const usage = (input: number, cacheRead: number, cacheWrite: number, output: number) => ({
@@ -104,10 +118,10 @@ test("a start answers 202 at once, the run goes on in the background, and the re
   const started = await res.json();
   const { id } = started.data;
   assert.deepEqual(started, { success: true, message: "Investigation started", data: { id } });
-  const { data: running } = await (await api.get(`/investigations/${id}`)).json();
+  const { data: running } = await (await api.get(`/${id}`)).json();
   assert.deepEqual(running, {
     id,
-    tenantId: "t_1",
+    tenantId: tenant,
     cluster: "prod-eu",
     incidentId: "inc_1",
     model: "fake:model",
@@ -122,8 +136,11 @@ test("a start answers 202 at once, the run goes on in the background, and the re
   const done = await api.finished(id);
   assert.deepEqual(done, { ...running, status: "done", report, finishedAt: done.finishedAt });
   assert.ok(done.startedAt <= done.finishedAt);
-  assert.equal(gw.requests.at(-1)?.url, "/internal/tenants/t_1/clusters/prod-eu/ops");
-  assert.match(model.calls[0]!.messages[1]!.text, /^Current time: \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\nAlert from cluster "prod-eu":\n.*KubePodCrashLooping/s);
+  assert.equal(gw.requests.at(-1)?.url, `/internal/tenants/${tenant}/clusters/prod-eu/ops`);
+  assert.match(
+    model.calls[0]!.messages[1]!.text,
+    /^Current time: \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\nIncident in cluster "prod-eu", titled "Pod is crash looping.", with 1 alert\(s\):\n.*KubePodCrashLooping/s,
+  );
   // Stored with the prompt it ran with, and every message in order, loadable as LangChain messages again.
   const row = await prisma.investigation.findUniqueOrThrow({ where: { id }, include: { messages: { orderBy: { seq: "asc" } } } });
   assert.equal(row.systemPrompt, INVESTIGATION_PROMPT);
@@ -143,29 +160,90 @@ test("a start answers 202 at once, the run goes on in the background, and the re
       ["fake:model", 4, 1489, 3588, 2011],
     ],
   );
+  // The transcript endpoint serves the stored messages as they are.
+  const transcript = await (await api.get(`/${id}/messages`)).json();
+  assert.deepEqual(
+    transcript.data.messages.map((m: { seq: number; data: unknown }) => [m.seq, m.data]),
+    row.messages.map((m) => [m.seq, m.data]),
+  );
 });
 
 test("a run that fails is failed with its error, and the service keeps serving", async () => {
   const model = fakeModel().respond(new AIMessage({ content: "## Summary\nThe pods", response_metadata: { stop_reason: "max_tokens" } }));
   const api = await serve(model);
 
-  const { id } = (await (await api.post(start)).json()).data;
+  const { id } = (await (await api.post({ ...start, incidentId: "inc_failed" })).json()).data;
   const failed = await api.finished(id);
   assert.equal(failed.status, "failed");
   assert.equal(failed.error, "run ended without a report (stop reason: max_tokens)");
   assert.equal(failed.report, null);
   assert.ok(failed.finishedAt);
-  assert.equal((await api.get(`/investigations/${id}`)).status, 200);
+  assert.equal((await api.get(`/${id}`)).status, 200);
+});
+
+test("one running investigation per incident: a second start is a 409 until it ends", async () => {
+  const release = gw.hold();
+  const model = fakeModel().respond(toolCallReply()).respond(reportReply()).respond(reportReply());
+  const api = await serve(model);
+  const body = { ...start, incidentId: "inc_busy" };
+
+  // Two at once: the lock lets only one through.
+  const [a, b] = await Promise.all([api.post(body), api.post(body)]);
+  assert.deepEqual([a.status, b.status].sort(), [202, 409]);
+  const { id } = (await (a.status === 202 ? a : b).json()).data;
+  const busy = await (await api.post(body)).json();
+  assert.deepEqual(busy, {
+    success: false,
+    error: { code: "INVESTIGATION_RUNNING", message: "This incident already has a running investigation", details: { id } },
+  });
+
+  release();
+  await api.finished(id);
+  const again = await api.post(body);
+  assert.equal(again.status, 202);
+  await api.finished((await again.json()).data.id);
+});
+
+test("an incident's investigations are listed newest first, and every read is scoped by tenant", async () => {
+  const model = fakeModel().respond(reportReply()).respond(reportReply()).respond(reportReply());
+  const api = await serve(model);
+  const ids: string[] = [];
+  for (const incidentId of ["inc_list", "inc_list", "inc_other"]) {
+    const { id } = (await (await api.post({ ...start, incidentId })).json()).data;
+    await api.finished(id);
+    ids.push(id);
+  }
+
+  const { data } = await (await api.get("?incidentId=inc_list")).json();
+  assert.deepEqual(
+    data.investigations.map((i: { id: string }) => i.id),
+    [ids[1], ids[0]],
+  );
+  assert.equal("systemPrompt" in data.investigations[0], false);
+
+  const missing = await api.get("");
+  assert.equal(missing.status, 400);
+  assert.equal((await missing.json()).error.code, "QUERY_VALIDATION_ERROR");
+
+  // Another tenant sees none of it.
+  const other = `t_${randomUUID()}`;
+  assert.deepEqual((await (await api.get("?incidentId=inc_list", other)).json()).data, { investigations: [] });
+  for (const path of [`/${ids[0]}`, `/${ids[0]}/messages`]) {
+    const res = await api.get(path, other);
+    assert.equal(res.status, 404, path);
+    assert.equal((await res.json()).error.code, "INVESTIGATION_NOT_FOUND");
+  }
 });
 
 test("an unknown investigation or route is a JSON 404", async () => {
   const api = await serve(fakeModel());
   const cases: [string, string, string][] = [
-    ["/investigations/nope", "INVESTIGATION_NOT_FOUND", "Investigation not found"],
-    ["/nope", "ROUTE_NOT_FOUND", "Route not found"],
+    [`${api.url}/tenants/${tenant}/investigations/nope`, "INVESTIGATION_NOT_FOUND", "Investigation not found"],
+    [`${api.url}/tenants/${tenant}/investigations/nope/messages`, "INVESTIGATION_NOT_FOUND", "Investigation not found"],
+    [`${api.url}/investigations/nope`, "ROUTE_NOT_FOUND", "Route not found"],
   ];
-  for (const [path, code, message] of cases) {
-    const res = await api.get(path);
+  for (const [url, code, message] of cases) {
+    const res = await fetch(url);
     assert.equal(res.status, 404);
     assert.deepEqual(await res.json(), { success: false, error: { code, message, details: null } });
   }

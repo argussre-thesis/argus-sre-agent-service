@@ -1,9 +1,12 @@
 import { HumanMessage } from "langchain";
 
-// The first message of an investigation: the alert as its source sent it.
+// The first message of an investigation: the incident, with its alerts as their sources sent them.
 // The time is here, not in the system prompt, so the prompt stays the same for caching and the thinking check.
-export function alertMessage(cluster: string, alert: unknown, now = new Date()): HumanMessage {
-  return new HumanMessage(`Current time: ${now.toISOString()}\nAlert from cluster "${cluster}":\n${JSON.stringify(alert, null, 2)}`);
+export function incidentMessage(incident: { cluster: string; title: string; alerts: unknown[] }, now = new Date()): HumanMessage {
+  const { cluster, title, alerts } = incident;
+  return new HumanMessage(
+    `Current time: ${now.toISOString()}\nIncident in cluster "${cluster}", titled ${JSON.stringify(title)}, with ${alerts.length} alert(s):\n${JSON.stringify(alerts, null, 2)}`,
+  );
 }
 
 // No tool names (the model gets the tool list) and no per-run values: the alert is third-party text, so it goes in the first HumanMessage.

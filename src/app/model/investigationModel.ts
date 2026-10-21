@@ -1,13 +1,14 @@
 import { mapChatMessagesToStoredMessages } from "@langchain/core/messages";
 import { AIMessage, type BaseMessage } from "langchain";
 import { runAgent } from "../../agent/agent.ts";
-import { alertMessage } from "../../agent/prompts.ts";
+import { incidentMessage } from "../../agent/prompts.ts";
 import { log } from "../../log.ts";
 import type { AppDeps } from "../app.ts";
 import { prisma } from "../lib/prisma.ts";
 import type { Prisma } from "../prisma/generated/prisma/client.ts";
-import type { StartInvestigationBody } from "../schemas/investigation.schema.ts";
+import { listInvestigationsQuerySchema, type StartInvestigationBody } from "../schemas/investigation.schema.ts";
 import { fail, ok } from "../types/serviceResponse.ts";
+import { parseQuery } from "../utils/parseQuery.ts";
 
 // LangChain's usage, the same for every provider. Its input_tokens include the cached ones.
 const usage = (m: BaseMessage, model: string) => {
@@ -33,24 +34,56 @@ const messageRows = (messages: BaseMessage[], firstSeq: number, model: string) =
     ...usage(messages[i]!, model),
   }));
 
-export const getInvestigationService = async (id: string) => {
-  const investigation = await prisma.investigation.findUnique({ where: { id }, omit: { systemPrompt: true } });
-  if (!investigation) {
-    return fail(404, "INVESTIGATION_NOT_FOUND", "Investigation not found");
-  }
+const investigationNotFound = () => fail(404, "INVESTIGATION_NOT_FOUND", "Investigation not found");
+
+export const getInvestigationService = async (tenantId: string, id: string) => {
+  const investigation = await prisma.investigation.findUnique({ where: { id, tenantId }, omit: { systemPrompt: true } });
+  if (!investigation) return investigationNotFound();
   return ok(investigation);
 };
 
-// Saves the investigation with its alert, then runs it in the background: each step's messages are saved as they come.
+export const listInvestigationsService = async (tenantId: string, query: unknown) => {
+  const parsed = parseQuery(listInvestigationsQuerySchema, query);
+  if (!parsed.success) return parsed;
+
+  const investigations = await prisma.investigation.findMany({
+    where: { tenantId, incidentId: parsed.data.incidentId },
+    orderBy: [{ startedAt: "desc" }, { id: "desc" }],
+    omit: { systemPrompt: true },
+  });
+  return ok({ investigations });
+};
+
+export const getInvestigationMessagesService = async (tenantId: string, id: string) => {
+  const investigation = await prisma.investigation.findUnique({
+    where: { id, tenantId },
+    select: { messages: { orderBy: { seq: "asc" }, select: { seq: true, data: true, createdAt: true } } },
+  });
+  if (!investigation) return investigationNotFound();
+  return ok(investigation);
+};
+
+// Saves the investigation with its incident, then runs it in the background: each step's messages are saved as they come.
 export const startInvestigationService = async (
   { agent, model, systemPrompt }: AppDeps,
-  { tenantId, cluster, incidentId, alert }: StartInvestigationBody,
+  tenantId: string,
+  { incidentId, cluster, title, alerts }: StartInvestigationBody,
 ) => {
-  const messages = [alertMessage(cluster, alert)];
-  const { id } = await prisma.investigation.create({
-    data: { tenantId, cluster, incidentId, model, systemPrompt, messages: { create: messageRows(messages, 0, model) } },
-    select: { id: true },
+  const messages = [incidentMessage({ cluster, title, alerts })];
+  const created = await prisma.$transaction(async (tx) => {
+    // Held until the transaction ends, so two starts for one incident can't both pass the check.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}), hashtext(${incidentId}))`;
+    const running = await tx.investigation.findFirst({ where: { tenantId, incidentId, status: "running" }, select: { id: true } });
+    if (running) return fail(409, "INVESTIGATION_RUNNING", "This incident already has a running investigation", running);
+    return ok(
+      await tx.investigation.create({
+        data: { tenantId, cluster, incidentId, model, systemPrompt, messages: { create: messageRows(messages, 0, model) } },
+        select: { id: true },
+      }),
+    );
   });
+  if (!created.success) return created;
+  const { id } = created.data;
   log("info", "investigation started", { id, tenantId, cluster, incidentId });
 
   let seq = messages.length;

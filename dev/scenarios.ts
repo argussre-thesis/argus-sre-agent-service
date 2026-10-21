@@ -14,12 +14,12 @@ const crashLooping = (pod: string) => ({
 export const scenarios: Scenario[] = [
   {
     name: "crashloop",
-    alert: crashLooping("crashloop-7ddc46fc9c-lhsvm"),
+    alert: crashLooping("crashloop-68784d8c77-sbnvd"),
     rootCause: "the container prints 'FATAL: db connection refused' and exits 1 (only the logs show it)",
   },
   {
     name: "oom",
-    alert: crashLooping("oom-8664f866bd-w9v4m"),
+    alert: crashLooping("oom-866ccf4c54-glwnl"),
     rootCause: "OOMKilled (exit 137): the container allocates 200 MB against a 32Mi memory limit",
   },
   {

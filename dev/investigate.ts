@@ -4,16 +4,16 @@ import { AIMessage, HumanMessage, ToolMessage } from "langchain";
 import { createSreAgent, runAgent } from "../src/agent/agent.ts";
 import { loadConfig } from "../src/config.ts";
 import { chatModel } from "../src/agent/chatModel.ts";
-import { alertMessage, INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
+import { incidentMessage, INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
 import { createTools } from "../src/agent/tools.ts";
 
 // Shaped like an Alertmanager webhook alert from kube-prometheus' KubePodCrashLooping rule.
 const alert = {
   status: "firing",
-  labels: { alertname: "KubePodCrashLooping", severity: "warning", namespace: "demo", pod: "crashloop-7ddc46fc9c-lhsvm", container: "app" },
+  labels: { alertname: "KubePodCrashLooping", severity: "warning", namespace: "demo", pod: "crashloop-68784d8c77-sbnvd", container: "app" },
   annotations: {
     summary: "Pod is crash looping.",
-    description: 'Pod demo/crashloop-7ddc46fc9c-lhsvm (app) is in waiting state (reason: "CrashLoopBackOff").',
+    description: 'Pod demo/crashloop-68784d8c77-sbnvd (app) is in waiting state (reason: "CrashLoopBackOff").',
   },
   startsAt: "2026-10-18T16:00:00Z",
 };
@@ -27,7 +27,7 @@ const totals = { calls: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
 const started = Date.now();
 const report = await runAgent(
   agent,
-  [alertMessage("minikube", alert)],
+  [incidentMessage({ cluster: "minikube", title: alert.annotations.summary, alerts: [alert] })],
   { tenantId: "t_dev", cluster: "minikube" },
   async (added) => {
     for (const m of added) {
