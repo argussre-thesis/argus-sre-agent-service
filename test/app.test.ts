@@ -29,8 +29,11 @@ const start = {
   incidentId: "inc_1",
   cluster: "prod-eu",
   title: "Pod is crash looping.",
-  alerts: [{ labels: { alertname: "KubePodCrashLooping" } }],
+  alerts: [{ status: "FIRING", startsAt: "2026-10-21T09:00:00Z", labels: { alertname: "KubePodCrashLooping" }, annotations: {} }],
 };
+const alert = start.alerts[0]!;
+const token = "t".repeat(32);
+const auth = { authorization: `Bearer ${token}` };
 const report = '## Summary\nx\n## Evidence\n- No pods `list_pods {"namespace":"demo"}`';
 const reportReply = () => new AIMessage({ content: report, response_metadata: { stop_reason: "end_turn" } });
 const toolCallReply = () =>
@@ -38,16 +41,16 @@ const toolCallReply = () =>
 
 async function serve(model: ReturnType<typeof fakeModel>) {
   const agent = createSreAgent(model, INVESTIGATION_PROMPT, createTools(gw.url), 30);
-  const server = createApp({ agent, model: "fake:model", systemPrompt: INVESTIGATION_PROMPT }).listen(0, "127.0.0.1");
+  const server = createApp({ agent, model: "fake:model", systemPrompt: INVESTIGATION_PROMPT, internalApiToken: token }).listen(0, "127.0.0.1");
   await once(server, "listening");
   after(() => new Promise((resolve) => server.close(resolve)));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const get = (path: string, tenantId = tenant) => fetch(`${url}/tenants/${tenantId}/investigations${path}`);
+  const get = (path: string, tenantId = tenant) => fetch(`${url}/tenants/${tenantId}/investigations${path}`, { headers: auth });
   return {
-    async post(body: unknown) {
+    async post(body: unknown, headers: Record<string, string> = auth) {
       const res = await fetch(`${url}/tenants/${tenant}/investigations`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { ...headers, "content-type": "application/json" },
         body: typeof body === "string" ? body : JSON.stringify(body),
       });
       if (res.status === 202) started.push((await res.clone().json()).data.id);
@@ -78,6 +81,12 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
     [{ ...start, alerts: [] }, "VALIDATION_ERROR", /"alerts"/],
     [{ ...start, alerts: "down" }, "VALIDATION_ERROR", /"alerts"/],
     [{ ...start, alerts: [[]] }, "VALIDATION_ERROR", /"alerts"/],
+    // An alert has the backend's fields and values.
+    [{ ...start, alerts: [{ ...alert, status: "firing" }] }, "VALIDATION_ERROR", /"alerts"/],
+    [{ ...start, alerts: [{ ...alert, startsAt: "yesterday" }] }, "VALIDATION_ERROR", /"alerts"/],
+    [{ ...start, alerts: [{ ...alert, labels: { severity: 1 } }] }, "VALIDATION_ERROR", /"alerts"/],
+    [{ ...start, alerts: [{ ...alert, annotations: undefined }] }, "VALIDATION_ERROR", /"alerts"/],
+    [{ ...start, alerts: [{ ...alert, fingerprint: "abc" }] }, "VALIDATION_ERROR", /"alerts"/],
     [{ ...start, tenantId: "t_2" }, "VALIDATION_ERROR", /Unrecognized key: \\"tenantId\\"/],
     ['{"incidentId":', "INVALID_REQUEST_BODY", /JSON/],
   ];
@@ -139,7 +148,7 @@ test("a start answers 202 at once, the run goes on in the background, and the re
   assert.equal(gw.requests.at(-1)?.url, `/internal/tenants/${tenant}/clusters/prod-eu/ops`);
   assert.match(
     model.calls[0]!.messages[1]!.text,
-    /^Current time: \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\nIncident in cluster "prod-eu", titled "Pod is crash looping.", with 1 alert\(s\):\n.*KubePodCrashLooping/s,
+    /^Current time: \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\nIncident in cluster "prod-eu", titled "Pod is crash looping.": 1 alert\(s\), 1 firing, 0 resolved\.\n.*\nKubePodCrashLooping: 1 firing/s,
   );
   // Stored with the prompt it ran with, and every message in order, loadable as LangChain messages again.
   const row = await prisma.investigation.findUniqueOrThrow({ where: { id }, include: { messages: { orderBy: { seq: "asc" } } } });
@@ -243,8 +252,27 @@ test("an unknown investigation or route is a JSON 404", async () => {
     [`${api.url}/investigations/nope`, "ROUTE_NOT_FOUND", "Route not found"],
   ];
   for (const [url, code, message] of cases) {
-    const res = await fetch(url);
+    const res = await fetch(url, { headers: auth });
     assert.equal(res.status, 404);
     assert.deepEqual(await res.json(), { success: false, error: { code, message, details: null } });
   }
+});
+
+test("without the internal token every route is a 401, and nothing starts", async () => {
+  const model = fakeModel();
+  const api = await serve(model);
+  const unauthorized = { success: false, error: { code: "INVALID_INTERNAL_TOKEN", message: "Missing or invalid internal API token", details: null } };
+  const headers: Record<string, string>[] = [{}, { authorization: token }, { authorization: `Bearer ${"x".repeat(32)}` }, { authorization: `Bearer ${token}x` }];
+  for (const h of headers) {
+    const res = await api.post(start, h);
+    assert.equal(res.status, 401, JSON.stringify(h));
+    assert.deepEqual(await res.json(), unauthorized);
+  }
+  for (const path of [`/tenants/${tenant}/investigations?incidentId=inc_1`, "/nope"]) {
+    const res = await fetch(`${api.url}${path}`);
+    assert.equal(res.status, 401, path);
+  }
+  // Checked before the body is parsed.
+  assert.equal((await api.post("{broken", {})).status, 401);
+  assert.equal(model.callCount, 0);
 });

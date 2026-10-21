@@ -27,7 +27,7 @@ try {
 const { name, model } = chatModel(config.model);
 const agent = createSreAgent(model, INVESTIGATION_PROMPT, createTools(config.opsUrl), config.maxModelCalls);
 
-createApp({ agent, model: name, systemPrompt: INVESTIGATION_PROMPT }).listen(config.port, "127.0.0.1", (err) => {
+createApp({ agent, model: name, systemPrompt: INVESTIGATION_PROMPT, internalApiToken: config.internalApiToken }).listen(config.port, "127.0.0.1", (err) => {
   if (err) {
     log("error", "cannot listen", { port: config.port, error: err.message });
     process.exit(1);

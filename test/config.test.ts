@@ -3,6 +3,8 @@ import { test } from "node:test";
 import { loadConfig } from "../src/config.ts";
 
 const DATABASE_URL = "postgresql://user:pass@db.example:5432/agent";
+const INTERNAL_API_TOKEN = "t".repeat(32);
+const required = { ANTHROPIC_API_KEY: "k", DATABASE_URL, INTERNAL_API_TOKEN };
 
 test("defaults with only an Anthropic key", () => {
   const defaults = {
@@ -10,17 +12,17 @@ test("defaults with only an Anthropic key", () => {
     opsUrl: "http://127.0.0.1:8081",
     model: { provider: "anthropic", name: "claude-opus-5-5", effort: "high" },
     maxModelCalls: 30,
+    internalApiToken: INTERNAL_API_TOKEN,
   };
-  assert.deepEqual(loadConfig({ ANTHROPIC_API_KEY: "k", DATABASE_URL }), defaults);
+  assert.deepEqual(loadConfig(required), defaults);
   // `KEY=` lines in a .env file count as unset.
   const empty = { PORT: "", OPS_URL: "", MODEL_PROVIDER: "", ANTHROPIC_MODEL: "", MODEL_EFFORT: "", MAX_MODEL_CALLS: "" };
-  assert.deepEqual(loadConfig({ ANTHROPIC_API_KEY: "k", DATABASE_URL, ...empty }), defaults);
+  assert.deepEqual(loadConfig({ ...required, ...empty }), defaults);
 });
 
 test("set values are used", () => {
   const env = {
-    ANTHROPIC_API_KEY: "k",
-    DATABASE_URL,
+    ...required,
     PORT: "9000",
     OPS_URL: "https://gateway.internal:8081",
     ANTHROPIC_MODEL: "claude-haiku-5-5",
@@ -32,12 +34,13 @@ test("set values are used", () => {
     opsUrl: "https://gateway.internal:8081",
     model: { provider: "anthropic", name: "claude-haiku-5-5", effort: "low" },
     maxModelCalls: 10,
+    internalApiToken: INTERNAL_API_TOKEN,
   });
 });
 
 test("openai needs its key and model, and has no effort", () => {
-  assert.throws(() => loadConfig({ MODEL_PROVIDER: "openai", OPENAI_API_KEY: "k", DATABASE_URL }), /OPENAI_MODEL/);
-  assert.deepEqual(loadConfig({ MODEL_PROVIDER: "openai", OPENAI_API_KEY: "k", OPENAI_MODEL: "m", DATABASE_URL }).model, {
+  assert.throws(() => loadConfig({ MODEL_PROVIDER: "openai", OPENAI_API_KEY: "k", DATABASE_URL, INTERNAL_API_TOKEN }), /OPENAI_MODEL/);
+  assert.deepEqual(loadConfig({ MODEL_PROVIDER: "openai", OPENAI_API_KEY: "k", OPENAI_MODEL: "m", DATABASE_URL, INTERNAL_API_TOKEN }).model, {
     provider: "openai",
     name: "m",
   });
@@ -54,8 +57,10 @@ test("bad values are rejected", () => {
     ["OPS_URL", "ftp://gateway:8081", /Invalid URL\n.*at OPS_URL/],
     ["DATABASE_URL", "", /expected string, received undefined\n.*at DATABASE_URL/],
     ["DATABASE_URL", "https://console.neon.tech/app/projects", /Invalid URL\n.*at DATABASE_URL/],
+    ["INTERNAL_API_TOKEN", "", /expected string, received undefined\n.*at INTERNAL_API_TOKEN/],
+    ["INTERNAL_API_TOKEN", "t".repeat(31), /Too small.*\n.*at INTERNAL_API_TOKEN/],
   ];
   for (const [name, value, error] of cases) {
-    assert.throws(() => loadConfig({ ANTHROPIC_API_KEY: "k", DATABASE_URL, [name]: value }), error, name);
+    assert.throws(() => loadConfig({ ...required, [name]: value }), error, name);
   }
 });

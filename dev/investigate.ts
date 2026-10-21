@@ -9,7 +9,7 @@ import { createTools } from "../src/agent/tools.ts";
 
 // Shaped like an Alertmanager webhook alert from kube-prometheus' KubePodCrashLooping rule.
 const alert = {
-  status: "firing",
+  status: "FIRING" as const,
   labels: { alertname: "KubePodCrashLooping", severity: "warning", namespace: "demo", pod: "crashloop-68784d8c77-sbnvd", container: "app" },
   annotations: {
     summary: "Pod is crash looping.",

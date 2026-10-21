@@ -1,9 +1,10 @@
+import type { IncidentAlert } from "../src/agent/prompts.ts";
+
 // The broken workloads in minikube's `demo` (experiment/runner/k8s/scenarios/), each with the alert kube-prometheus would fire for it.
 // Pod names are today's: if minikube recreates a pod, update its name here.
-export type Scenario = { name: string; alert: Record<string, unknown>; rootCause: string };
+export type Scenario = { name: string; alert: Pick<IncidentAlert, "labels" | "annotations">; rootCause: string };
 
 const crashLooping = (pod: string) => ({
-  status: "firing",
   labels: { alertname: "KubePodCrashLooping", severity: "warning", namespace: "demo", pod, container: "app" },
   annotations: {
     summary: "Pod is crash looping.",
@@ -25,8 +26,7 @@ export const scenarios: Scenario[] = [
   {
     name: "bad-image",
     alert: {
-      status: "firing",
-      labels: { alertname: "KubePodNotReady", severity: "warning", namespace: "demo", pod: "bad-image-6cc4665f8b-twgf9" },
+          labels: { alertname: "KubePodNotReady", severity: "warning", namespace: "demo", pod: "bad-image-6cc4665f8b-twgf9" },
       annotations: {
         summary: "Pod has been in a non-ready state for more than 15 minutes.",
         description: "Pod demo/bad-image-6cc4665f8b-twgf9 has been in a non-ready state for longer than 15 minutes.",
@@ -38,8 +38,7 @@ export const scenarios: Scenario[] = [
     // KubePodNotReady only fires for Pending/Unknown/Failed pods; this one is Running, so the deployment's alert fires.
     name: "not-ready",
     alert: {
-      status: "firing",
-      labels: { alertname: "KubeDeploymentReplicasMismatch", severity: "warning", namespace: "demo", deployment: "not-ready" },
+          labels: { alertname: "KubeDeploymentReplicasMismatch", severity: "warning", namespace: "demo", deployment: "not-ready" },
       annotations: {
         summary: "Deployment has not matched the expected number of replicas.",
         description: "Deployment demo/not-ready has not matched the expected number of replicas for longer than 15 minutes.",
@@ -50,8 +49,7 @@ export const scenarios: Scenario[] = [
   {
     name: "bad-deploy",
     alert: {
-      status: "firing",
-      labels: { alertname: "KubeDeploymentRolloutStuck", severity: "warning", namespace: "demo", deployment: "web", condition: "Progressing", status: "false" },
+          labels: { alertname: "KubeDeploymentRolloutStuck", severity: "warning", namespace: "demo", deployment: "web", condition: "Progressing", status: "false" },
       annotations: {
         summary: "Deployment rollout is not progressing.",
         description: "Rollout of deployment demo/web is not progressing for longer than 15 minutes.",

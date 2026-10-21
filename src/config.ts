@@ -11,6 +11,7 @@ export interface Config {
   opsUrl: string;
   model: ModelConfig;
   maxModelCalls: number;
+  internalApiToken: string;
 }
 
 const common = z.object({
@@ -18,6 +19,7 @@ const common = z.object({
   OPS_URL: z.url({ protocol: /^https?$/ }).default("http://127.0.0.1:8081"),
   MAX_MODEL_CALLS: z.coerce.number().int().positive().default(30),
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
+  INTERNAL_API_TOKEN: z.string().min(32),
 });
 
 const envSchema = z.discriminatedUnion("MODEL_PROVIDER", [
@@ -48,5 +50,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         ? { provider: "anthropic", name: e.ANTHROPIC_MODEL, effort: e.MODEL_EFFORT }
         : { provider: "openai", name: e.OPENAI_MODEL },
     maxModelCalls: e.MAX_MODEL_CALLS,
+    internalApiToken: e.INTERNAL_API_TOKEN,
   };
 }

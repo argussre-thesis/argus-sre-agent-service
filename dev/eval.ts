@@ -4,6 +4,7 @@ import { setTimeout } from "node:timers/promises";
 import { scenarios } from "./scenarios.ts";
 
 const url = process.env.AGENT_URL ?? "http://127.0.0.1:8090";
+const authorization = `Bearer ${process.env.INTERNAL_API_TOKEN}`;
 const names = process.argv.slice(2);
 const unknown = names.filter((n) => !scenarios.some((s) => s.name === n));
 if (unknown.length > 0) {
@@ -14,13 +15,13 @@ if (unknown.length > 0) {
 for (const s of scenarios.filter((s) => names.length === 0 || names.includes(s.name))) {
   const res = await fetch(`${url}/tenants/t_dev/investigations`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { authorization, "content-type": "application/json" },
     // incidentId marks eval runs in the database.
     body: JSON.stringify({
       incidentId: `eval-${s.name}`,
       cluster: "minikube",
-      title: (s.alert.annotations as { summary: string }).summary,
-      alerts: [{ ...s.alert, startsAt: new Date().toISOString() }],
+      title: s.alert.annotations.summary!,
+      alerts: [{ status: "FIRING", startsAt: new Date().toISOString(), ...s.alert }],
     }),
   });
   const started = await res.json();
@@ -29,7 +30,7 @@ for (const s of scenarios.filter((s) => names.length === 0 || names.includes(s.n
   let inv;
   do {
     await setTimeout(2000);
-    inv = (await (await fetch(`${url}/tenants/t_dev/investigations/${started.data.id}`)).json()).data;
+    inv = (await (await fetch(`${url}/tenants/t_dev/investigations/${started.data.id}`, { headers: { authorization } })).json()).data;
   } while (inv.status === "running");
 
   const secs = (Date.parse(inv.finishedAt) - Date.parse(inv.startedAt)) / 1000;
