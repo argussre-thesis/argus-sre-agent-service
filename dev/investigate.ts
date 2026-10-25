@@ -1,11 +1,10 @@
 // One real investigation from the command line, before the HTTP API (step 5): each step as it happens, then the report.
-// Needs the dev gateway (`npm run dev:gateway` in argus-sre-runner/) and the runner in minikube. Costs tokens.
+// Needs the gateway (`npm run dev` in argus-sre-gateway/) and the runner in minikube. Costs tokens.
 import { AIMessage, HumanMessage, ToolMessage } from "langchain";
-import { createSreAgent, runAgent } from "../src/agent/agent.ts";
+import { runWithGateway } from "../src/agent/agent.ts";
 import { loadConfig } from "../src/config.ts";
 import { chatModel } from "../src/agent/chatModel.ts";
 import { incidentMessage, INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
-import { createTools } from "../src/agent/tools.ts";
 
 // Shaped like an Alertmanager webhook alert from kube-prometheus' KubePodCrashLooping rule.
 const alert = {
@@ -20,13 +19,16 @@ const alert = {
 
 const config = loadConfig();
 const { name, model } = chatModel(config.model);
-const agent = createSreAgent(model, INVESTIGATION_PROMPT, createTools(config.opsUrl), config.maxModelCalls);
 console.log(`${name}${"effort" in config.model ? `, effort ${config.model.effort}` : ""}, at most ${config.maxModelCalls} model calls\n`);
 
 const totals = { calls: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
 const started = Date.now();
-const report = await runAgent(
-  agent,
+const report = await runWithGateway(
+  model,
+  INVESTIGATION_PROMPT,
+  config.maxModelCalls,
+  config.gatewayUrl,
+  config.agentGatewayToken,
   [incidentMessage({ cluster: "minikube", title: alert.annotations.summary, alerts: [alert] })],
   { tenantId: "t_dev", cluster: "minikube" },
   async (added) => {

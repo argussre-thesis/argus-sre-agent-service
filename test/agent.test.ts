@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { AIMessage, type BaseMessage, fakeModel, HumanMessage, SystemMessage, ToolMessage } from "langchain";
-import { createSreAgent, runAgent } from "../src/agent/agent.ts";
+import { runWithGateway } from "../src/agent/agent.ts";
 import { INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
-import { createTools } from "../src/agent/tools.ts";
-import { fakeGateway } from "./helpers.ts";
+import { fakeMcpGateway } from "./helpers.ts";
 
-const gw = await fakeGateway();
+const gw = await fakeMcpGateway();
 after(() => gw.close());
 const context = { tenantId: "t_1", cluster: "prod-eu" };
+const agentGatewayToken = "a".repeat(32);
 
 const answer = (text: string, stop_reason = "end_turn") => new AIMessage({ content: text, response_metadata: { stop_reason } });
 const report = (evidence: string) => `## Summary\nx\n## Evidence\n${evidence}`;
@@ -18,24 +18,25 @@ const listPods = (args: Record<string, unknown>, id: string = crypto.randomUUID(
   new AIMessage({ content: "", tool_calls: [{ name: "list_pods", args, id }] });
 
 async function run(model: ReturnType<typeof fakeModel>, maxModelCalls = 30) {
-  const agent = createSreAgent(model, INVESTIGATION_PROMPT, createTools(gw.url), maxModelCalls);
   const steps: BaseMessage[][] = [];
-  const report = await runAgent(agent, [new HumanMessage("api pods crash-looping in demo")], context, async (added) => {
+  const messages = [new HumanMessage("api pods crash-looping in demo")];
+  const report = await runWithGateway(model, INVESTIGATION_PROMPT, maxModelCalls, gw.url, agentGatewayToken, messages, context, async (added) => {
     steps.push(added);
   });
   return { report, steps };
 }
 
 test("a tool call runs on the run's cluster, its result goes back, the report is returned", async () => {
-  gw.answer(200, { ok: true, data: { items: [] } });
+  gw.answer({ content: [{ type: "text", text: '{"items":[]}' }] });
   const model = fakeModel()
     .respond(listPods({ namespace: "demo" }, "call_1"))
     .respond(answer(report(`- No pods ${demoPods}`)));
   const { report: text, steps } = await run(model);
 
   assert.equal(text, report(`- No pods ${demoPods}`));
-  assert.deepEqual(gw.requests.at(-1)?.url, "/internal/tenants/t_1/clusters/prod-eu/ops");
-  assert.deepEqual(gw.requests.at(-1)?.body, { op: "list_pods", args: { namespace: "demo" } });
+  assert.equal(gw.requests.at(-1)?.url, "/mcp/tenants/t_1/clusters/prod-eu");
+  assert.equal(gw.requests.at(-1)?.authorization, `Bearer ${agentGatewayToken}`);
+  assert.deepEqual(gw.calls.at(-1), { namespace: "demo" });
   const [system, alert] = model.calls[0]!.messages;
   assert.ok(SystemMessage.isInstance(system) && system.text === INVESTIGATION_PROMPT);
   assert.ok(HumanMessage.isInstance(alert));
@@ -49,7 +50,7 @@ test("a tool call runs on the run's cluster, its result goes back, the report is
 });
 
 test("a mistyped arg goes back to the model as an error, without a stack trace, and the run goes on", async () => {
-  const sent = gw.requests.length;
+  const sent = gw.calls.length;
   const model = fakeModel()
     .respond(listPods({ namespce: "demo" }))
     .respond(answer(report("None.")));
@@ -58,9 +59,12 @@ test("a mistyped arg goes back to the model as an error, without a stack trace, 
   const error = model.calls[1]!.messages.at(-1);
   assert.ok(ToolMessage.isInstance(error));
   assert.equal(error.status, "error");
-  assert.match(error.text, /^Error BAD_ARGS: Received tool input did not match expected schema\n.*Unrecognized key: "namespce"/s);
+  assert.match(
+    error.text,
+    /^Error BAD_ARGS: Received tool input did not match expected schema\nDetails: .*required property "namespace".*Property "namespce" does not match/s,
+  );
   assert.doesNotMatch(error.text, /\n\s+at /);
-  assert.equal(gw.requests.length, sent);
+  assert.equal(gw.calls.length, sent);
 });
 
 test("the call limit fails the run, before LangGraph's own step limit does", async () => {

@@ -13,7 +13,8 @@ export type ModelConfig =
 export interface Config {
   host: string;
   port: number;
-  opsUrl: string;
+  gatewayUrl: string;
+  agentGatewayToken: string;
   model: ModelConfig;
   maxModelCalls: number;
   internalApiToken: string;
@@ -22,7 +23,8 @@ export interface Config {
 const common = z.object({
   HOST: z.string().default("127.0.0.1"),
   PORT: z.coerce.number().int().positive().default(8090),
-  OPS_URL: z.url({ protocol: /^https?$/ }).default("http://127.0.0.1:8081"),
+  GATEWAY_URL: z.url({ protocol: /^https?$/ }).default("http://127.0.0.1:8081"),
+  AGENT_GATEWAY_TOKEN: z.string().min(32),
   MAX_MODEL_CALLS: z.coerce.number().int().positive().default(30),
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
   INTERNAL_API_TOKEN: z.string().min(32),
@@ -52,7 +54,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     host: e.HOST,
     port: e.PORT,
-    opsUrl: e.OPS_URL,
+    gatewayUrl: e.GATEWAY_URL,
+    agentGatewayToken: e.AGENT_GATEWAY_TOKEN,
     model:
       e.MODEL_PROVIDER === "anthropic"
         ? { provider: "anthropic", name: e.ANTHROPIC_MODEL, effort: e.MODEL_EFFORT }

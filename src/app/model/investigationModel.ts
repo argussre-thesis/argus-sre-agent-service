@@ -1,6 +1,6 @@
 import { mapChatMessagesToStoredMessages } from "@langchain/core/messages";
 import { AIMessage, type BaseMessage } from "langchain";
-import { runAgent } from "../../agent/agent.ts";
+import { runWithGateway } from "../../agent/agent.ts";
 import { incidentMessage } from "../../agent/prompts.ts";
 import { log } from "../../log.ts";
 import type { AppDeps } from "../app.ts";
@@ -65,7 +65,7 @@ export const getInvestigationMessagesService = async (tenantId: string, id: stri
 
 // Saves the investigation with its incident, then runs it in the background: each step's messages are saved as they come.
 export const startInvestigationService = async (
-  { agent, model, effort, systemPrompt }: AppDeps,
+  { chatModel, model, effort, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken }: AppDeps,
   tenantId: string,
   { incidentId, cluster, title, alerts }: StartInvestigationBody,
 ) => {
@@ -88,7 +88,7 @@ export const startInvestigationService = async (
 
   let seq = messages.length;
   // Nothing awaits this promise, so it must never reject: Node 24 exits on an unhandled rejection.
-  runAgent(agent, messages, { tenantId, cluster }, async (added) => {
+  runWithGateway(chatModel, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, { tenantId, cluster }, async (added) => {
     await prisma.message.createMany({ data: messageRows(added, seq, model).map((row) => ({ ...row, investigationId: id })) });
     seq += added.length;
   })

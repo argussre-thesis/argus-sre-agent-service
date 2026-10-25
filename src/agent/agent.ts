@@ -1,4 +1,5 @@
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import type { StructuredTool } from "@langchain/core/tools";
 import {
   AIMessage,
   anthropicPromptCachingMiddleware,
@@ -10,20 +11,17 @@ import {
   toolErrorMiddleware,
   ToolInvocationError,
 } from "langchain";
-import * as z from "zod";
 import { citationProblems } from "./citations.ts";
 import { log } from "../log.ts";
-import type { OpsContext } from "./ops.ts";
-import type { createTools } from "./tools.ts";
+import { connectGateway, type OpsContext } from "./mcp.ts";
 
-export function createSreAgent(model: BaseChatModel, systemPrompt: string, tools: ReturnType<typeof createTools>, maxModelCalls: number) {
+export function createSreAgent(model: BaseChatModel, systemPrompt: string, tools: StructuredTool[], maxModelCalls: number) {
   return createAgent({
     model,
     systemPrompt,
     tools,
-    contextSchema: z.object({ tenantId: z.string(), cluster: z.string() }),
     middleware: [
-      // LangChain's text for bad args carries a JS stack trace with our file paths; the model needs only Zod's message.
+      // LangChain's text for bad args carries a JS stack trace with our file paths; the model needs only the schema check's message.
       toolErrorMiddleware({
         onError: (err) => (ToolInvocationError.isInstance(err) ? `Error BAD_ARGS: ${err.toolError.message}` : undefined),
       }),
@@ -86,9 +84,7 @@ export async function runAgent(
   onStep: (added: BaseMessage[]) => Promise<void>,
 ): Promise<string> {
   let all = messages;
-  // context is passed to runtime so later on in callOp we can say runtime.context and get context. 
-  // The agent should never be the one providing that.
-  for await (const state of await agent.stream({ messages }, { streamMode: "values", context })) {
+  for await (const state of await agent.stream({ messages }, { streamMode: "values" })) {
     if (state.messages.length === all.length) continue;
     const added = state.messages.slice(all.length);
     all = state.messages;
@@ -100,6 +96,24 @@ export async function runAgent(
     throw new Error(`run ended without a report (stop reason: ${(AIMessage.isInstance(last) && stopReason(last)) || "none"})`);
   }
   return last.text;
+}
+
+export async function runWithGateway(
+  model: BaseChatModel,
+  systemPrompt: string,
+  maxModelCalls: number,
+  gatewayUrl: string,
+  agentGatewayToken: string,
+  messages: BaseMessage[],
+  context: OpsContext,
+  onStep: (added: BaseMessage[]) => Promise<void>,
+): Promise<string> {
+  const gateway = await connectGateway(gatewayUrl, agentGatewayToken, context);
+  try {
+    return await runAgent(createSreAgent(model, systemPrompt, gateway.tools, maxModelCalls), messages, context, onStep);
+  } finally {
+    await gateway.close();
+  }
 }
 
 function logStep(m: AIMessage, context: OpsContext): void {

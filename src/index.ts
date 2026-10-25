@@ -1,11 +1,9 @@
-import { createSreAgent } from "./agent/agent.ts";
 import { createApp } from "./app/app.ts";
 import { failInterruptedInvestigationsService } from "./app/model/investigationModel.ts";
 import { loadConfig, type Config } from "./config.ts";
 import { log } from "./log.ts";
 import { chatModel } from "./agent/chatModel.ts";
 import { INVESTIGATION_PROMPT } from "./agent/prompts.ts";
-import { createTools } from "./agent/tools.ts";
 
 let config: Config;
 try {
@@ -26,20 +24,22 @@ try {
 
 const { name, model, effort } = chatModel(config.model);
 if (config.model.effort && !effort) log("warn", "MODEL_EFFORT ignored: this model takes no effort", { model: name });
-const agent = createSreAgent(model, INVESTIGATION_PROMPT, createTools(config.opsUrl), config.maxModelCalls);
 
 createApp({
-  agent,
+  chatModel: model,
   model: name,
   effort,
   systemPrompt: INVESTIGATION_PROMPT,
+  maxModelCalls: config.maxModelCalls,
+  gatewayUrl: config.gatewayUrl,
+  agentGatewayToken: config.agentGatewayToken,
   internalApiToken: config.internalApiToken,
 }).listen(config.port, config.host, (err) => {
   if (err) {
     log("error", "cannot listen", { host: config.host, port: config.port, error: err.message });
     process.exit(1);
   }
-  log("info", "agent service listening", { url: `http://${config.host}:${config.port}`, opsUrl: config.opsUrl, model: config.model });
+  log("info", "agent service listening", { url: `http://${config.host}:${config.port}`, gatewayUrl: config.gatewayUrl, model: config.model });
 });
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {

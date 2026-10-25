@@ -1,5 +1,5 @@
 // Runs the broken-workload scenarios through the running service (npm run dev), one at a time, and prints each report.
-// Needs the dev gateway and the runner in minikube. Costs tokens. `npm run eval -- oom crashloop` runs only those.
+// Needs the gateway and the runner in minikube. Costs tokens. `npm run eval -- oom crashloop` runs only those.
 import { setTimeout } from "node:timers/promises";
 import { scenarios } from "./scenarios.ts";
 

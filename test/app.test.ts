@@ -1,19 +1,18 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
+import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { mapStoredMessagesToChatMessages, type StoredMessage } from "@langchain/core/messages";
 import { AIMessage, fakeModel } from "langchain";
-import { createSreAgent } from "../src/agent/agent.ts";
 import { createApp } from "../src/app/app.ts";
 import { prisma } from "../src/app/lib/prisma.ts";
 import { INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
-import { createTools } from "../src/agent/tools.ts";
-import { fakeGateway } from "./helpers.ts";
+import { fakeMcpGateway } from "./helpers.ts";
 
-const gw = await fakeGateway();
+const gw = await fakeMcpGateway();
 after(() => gw.close());
 
 // shortcut: no test database, these tests use DATABASE_URL's (.env) and delete only what they started; a test database for CI.
@@ -39,9 +38,17 @@ const reportReply = () => new AIMessage({ content: report, response_metadata: { 
 const toolCallReply = () =>
   new AIMessage({ content: "", tool_calls: [{ name: "list_pods", args: { namespace: "demo" }, id: "call_1" }] });
 
-async function serve(model: ReturnType<typeof fakeModel>) {
-  const agent = createSreAgent(model, INVESTIGATION_PROMPT, createTools(gw.url), 30);
-  const server = createApp({ agent, model: "fake:model", effort: "low", systemPrompt: INVESTIGATION_PROMPT, internalApiToken: token }).listen(0, "127.0.0.1");
+async function serve(model: ReturnType<typeof fakeModel>, gatewayUrl = gw.url) {
+  const server = createApp({
+    chatModel: model,
+    model: "fake:model",
+    effort: "low",
+    systemPrompt: INVESTIGATION_PROMPT,
+    maxModelCalls: 30,
+    gatewayUrl,
+    agentGatewayToken: "a".repeat(32),
+    internalApiToken: token,
+  }).listen(0, "127.0.0.1");
   await once(server, "listening");
   after(() => new Promise((resolve) => server.close(resolve)));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -146,7 +153,7 @@ test("a start answers 202 at once, the run goes on in the background, and the re
   const done = await api.finished(id);
   assert.deepEqual(done, { ...running, status: "done", report, finishedAt: done.finishedAt });
   assert.ok(done.startedAt <= done.finishedAt);
-  assert.equal(gw.requests.at(-1)?.url, `/internal/tenants/${tenant}/clusters/prod-eu/ops`);
+  assert.equal(gw.requests.at(-1)?.url, `/mcp/tenants/${tenant}/clusters/prod-eu`);
   assert.match(
     model.calls[0]!.messages[1]!.text,
     /^Current time: \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\nIncident in cluster "prod-eu", titled "Pod is crash looping.": 1 alert\(s\), 1 firing, 0 resolved\.\n.*\nKubePodCrashLooping: 1 firing/s,
@@ -189,6 +196,21 @@ test("a run that fails is failed with its error, and the service keeps serving",
   assert.equal(failed.report, null);
   assert.ok(failed.finishedAt);
   assert.equal((await api.get(`/${id}`)).status, 200);
+});
+
+test("a gateway that can't be reached fails the investigation before any model call", async () => {
+  const closed = createServer();
+  await new Promise<void>((resolve) => closed.listen(0, "127.0.0.1", resolve));
+  const { port } = closed.address() as AddressInfo;
+  await new Promise((resolve) => closed.close(resolve));
+  const model = fakeModel().respond(reportReply());
+  const api = await serve(model, `http://127.0.0.1:${port}`);
+
+  const { id } = (await (await api.post({ ...start, incidentId: "inc_no_gateway" })).json()).data;
+  const failed = await api.finished(id);
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.error, `cannot reach the gateway: fetch failed: connect ECONNREFUSED 127.0.0.1:${port}`);
+  assert.equal(model.callCount, 0);
 });
 
 test("one running investigation per incident: a second start is a 409 until it ends", async () => {

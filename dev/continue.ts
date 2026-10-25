@@ -1,12 +1,11 @@
 // Continues a stored investigation with one more question, as step 8's chat will: its stored system prompt and messages,
-// the same model and tools, plus the question. Saves nothing. Needs the dev gateway. Costs tokens.
+// the same model and tools, plus the question. Saves nothing. Needs the gateway. Costs tokens.
 // npm run continue -- <investigation id> "<question>" [--edit-prompt]
 import { ChatAnthropic } from "@langchain/anthropic";
 import { mapStoredMessagesToChatMessages, type StoredMessage } from "@langchain/core/messages";
 import { AIMessage, HumanMessage, ToolMessage } from "langchain";
-import { createSreAgent, runAgent } from "../src/agent/agent.ts";
+import { runWithGateway } from "../src/agent/agent.ts";
 import { chatModel } from "../src/agent/chatModel.ts";
-import { createTools } from "../src/agent/tools.ts";
 import { prisma } from "../src/app/lib/prisma.ts";
 import { loadConfig } from "../src/config.ts";
 
@@ -26,7 +25,6 @@ model.invocationKwargs = { thinking: { type: "adaptive", block_binding: { prefix
 
 // The control: a changed system prompt must be refused.
 const systemPrompt = flag === "--edit-prompt" ? `${inv.systemPrompt}\nToday is Monday.` : inv.systemPrompt;
-const agent = createSreAgent(model, systemPrompt, createTools(config.opsUrl), config.maxModelCalls);
 
 const history = mapStoredMessagesToChatMessages(inv.messages.map((m) => m.data as unknown as StoredMessage));
 const thinking = history
@@ -36,7 +34,9 @@ const thinking = history
 console.log(`${inv.id} (${inv.status}): ${history.length} stored messages, ${thinking} thinking blocks, ${name}\n`);
 
 try {
-  const answer = await runAgent(agent, [...history, new HumanMessage(question)], { tenantId: inv.tenantId, cluster: inv.cluster }, async (added) => {
+  const messages = [...history, new HumanMessage(question)];
+  const context = { tenantId: inv.tenantId, cluster: inv.cluster };
+  const answer = await runWithGateway(model, systemPrompt, config.maxModelCalls, config.gatewayUrl, config.agentGatewayToken, messages, context, async (added) => {
     for (const m of added) {
       if (ToolMessage.isInstance(m)) console.log(`  -> ${m.name}: ${m.status === "error" ? m.text : `${m.text.length} chars`}`);
       const u = AIMessage.isInstance(m) ? m.usage_metadata : undefined;
