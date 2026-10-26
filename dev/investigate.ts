@@ -18,6 +18,9 @@ const alert = {
 };
 
 const config = loadConfig();
+// The gateway answers any tenant but the runner token's org with RUNNER_OFFLINE.
+const tenantId = process.env.DEV_TENANT_ID;
+if (!tenantId) throw new Error("set DEV_TENANT_ID in .env: the org id (org_…) of the minikube runner's token");
 const { name, model } = chatModel(config.model);
 console.log(`${name}${"effort" in config.model ? `, effort ${config.model.effort}` : ""}, at most ${config.maxModelCalls} model calls\n`);
 
@@ -30,7 +33,7 @@ const report = await runWithGateway(
   config.gatewayUrl,
   config.agentGatewayToken,
   [incidentMessage({ cluster: "minikube", title: alert.annotations.summary, alerts: [alert] })],
-  { tenantId: "t_dev", cluster: "minikube" },
+  { tenantId, cluster: "minikube" },
   async (added) => {
     for (const m of added) {
       if (ToolMessage.isInstance(m)) console.log(`  -> ${m.name}: ${m.status === "error" ? m.text : `${m.text.length} chars`}`);

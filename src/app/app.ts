@@ -13,12 +13,12 @@ export type AppDeps = {
   maxModelCalls: number;
   gatewayUrl: string;
   agentGatewayToken: string;
-  internalApiToken: string;
+  backendAgentServiceToken: string;
 };
 
 export function createApp(deps: AppDeps) {
   const app = express();
-  app.use(requireInternalToken(deps.internalApiToken));
+  app.use(requireInternalToken(deps.backendAgentServiceToken));
   app.use(express.json({ limit: "1mb" }));
 
   app.use("/api/v1/tenants/:tenantId/investigations", investigationRoutes(deps));

@@ -47,7 +47,7 @@ async function serve(model: ReturnType<typeof fakeModel>, gatewayUrl = gw.url) {
     maxModelCalls: 30,
     gatewayUrl,
     agentGatewayToken: "a".repeat(32),
-    internalApiToken: token,
+    backendAgentServiceToken: token,
   }).listen(0, "127.0.0.1");
   await once(server, "listening");
   after(() => new Promise((resolve) => server.close(resolve)));

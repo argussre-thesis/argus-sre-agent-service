@@ -33,7 +33,7 @@ createApp({
   maxModelCalls: config.maxModelCalls,
   gatewayUrl: config.gatewayUrl,
   agentGatewayToken: config.agentGatewayToken,
-  internalApiToken: config.internalApiToken,
+  backendAgentServiceToken: config.backendAgentServiceToken,
 }).listen(config.port, config.host, (err) => {
   if (err) {
     log("error", "cannot listen", { host: config.host, port: config.port, error: err.message });

@@ -17,7 +17,7 @@ export interface Config {
   agentGatewayToken: string;
   model: ModelConfig;
   maxModelCalls: number;
-  internalApiToken: string;
+  backendAgentServiceToken: string;
 }
 
 const common = z.object({
@@ -27,7 +27,7 @@ const common = z.object({
   AGENT_GATEWAY_TOKEN: z.string().min(32),
   MAX_MODEL_CALLS: z.coerce.number().int().positive().default(30),
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
-  INTERNAL_API_TOKEN: z.string().min(32),
+  BACKEND_AGENT_SERVICE_TOKEN: z.string().min(32),
 });
 
 const envSchema = z.discriminatedUnion("MODEL_PROVIDER", [
@@ -61,6 +61,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         ? { provider: "anthropic", name: e.ANTHROPIC_MODEL, effort: e.MODEL_EFFORT }
         : { provider: "openai", name: e.OPENAI_MODEL, ...(e.MODEL_EFFORT && { effort: e.MODEL_EFFORT }) },
     maxModelCalls: e.MAX_MODEL_CALLS,
-    internalApiToken: e.INTERNAL_API_TOKEN,
+    backendAgentServiceToken: e.BACKEND_AGENT_SERVICE_TOKEN,
   };
 }
