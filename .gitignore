@@ -1,5 +1,5 @@
 node_modules/
 data/
-.env
+*.env
 notes.txt
 src/app/prisma/generated/
