@@ -71,7 +71,7 @@ export const startInvestigationService = async (
 ) => {
   const messages = [incidentMessage({ cluster, title, alerts })];
   const created = await prisma.$transaction(async (tx) => {
-    // Held until the transaction ends, so two starts for one incident can't both pass the check.
+    // lock until investigation creation is done.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}), hashtext(${incidentId}))`;
     const running = await tx.investigation.findFirst({ where: { tenantId, incidentId, status: "running" }, select: { id: true } });
     if (running) return fail(409, "INVESTIGATION_RUNNING", "This incident already has a running investigation", running);
@@ -87,7 +87,7 @@ export const startInvestigationService = async (
   log("info", "investigation started", { id, tenantId, cluster, incidentId });
 
   let seq = messages.length;
-  // Nothing awaits this promise, so it must never reject: Node 24 exits on an unhandled rejection.
+  // Do not await, invetigation is running in background
   runWithGateway(chatModel, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, { tenantId, cluster }, async (added) => {
     await prisma.message.createMany({ data: messageRows(added, seq, model).map((row) => ({ ...row, investigationId: id })) });
     seq += added.length;
@@ -106,8 +106,7 @@ export const startInvestigationService = async (
   return ok({ id });
 };
 
-// At startup, before any run starts: a run still `running` lived in a process that is gone.
-// shortcut: assumes one instance (it would fail another's live runs); runs need an owner before we scale.
+// At startup, marks investigations that were running when service stopped as failed.
 export const failInterruptedInvestigationsService = async () => {
   const { count } = await prisma.investigation.updateMany({
     where: { status: "running" },
