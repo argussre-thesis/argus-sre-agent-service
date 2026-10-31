@@ -6,14 +6,11 @@ import pkg from "../../package.json" with { type: "json" };
 
 export type OpsContext = { tenantId: string; cluster: string };
 
-// The gateway gives up on the runner after ~12s; this only catches a hung gateway.
 const TIMEOUT_MS = 30_000;
-// ~50 pods. Every later model call resends a result, so a bigger one should be a narrower query.
 const MAX_RESULT_CHARS = 20_000;
 
 function capped(text: string): string {
   if (text.length <= MAX_RESULT_CHARS) return text;
-  // Don't keep half of a surrogate pair (an emoji): jsonb rejects it.
   const end = /[\uD800-\uDBFF]/.test(text[MAX_RESULT_CHARS - 1]!) ? MAX_RESULT_CHARS - 1 : MAX_RESULT_CHARS;
   const [total, kept] = [text.length, end].map((n) => n.toLocaleString("en"));
   return `${text.slice(0, end)}\n[Cut: this result is ${total} characters, only the first ${kept} are shown. Narrow the query to see the rest.]`;
@@ -53,13 +50,11 @@ export async function connectGateway(gatewayUrl: string, token: string, ctx: Ops
   };
 
   const tools = listed.tools.map((t) =>
-    // LangChain has checked args against the schema, an object.
     tool((args) => call(t.name, args as Record<string, unknown>), {
       name: t.name,
       description: t.description ?? "",
       schema: t.inputSchema,
       extras: { strict: true },
-      // Without it a bad arg is only "did not match expected schema", with nothing the model can fix.
       verboseParsingErrors: true,
     }),
   );

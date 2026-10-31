@@ -21,26 +21,19 @@ export function createSreAgent(model: BaseChatModel, systemPrompt: string, tools
     systemPrompt,
     tools,
     middleware: [
-      // LangChain's text for bad args carries a JS stack trace with our file paths; the model needs only the schema check's message.
       toolErrorMiddleware({
         onError: (err) => (ToolInvocationError.isInstance(err) ? `Error BAD_ARGS: ${err.toolError.message}` : undefined),
       }),
-      // Before the call limit: after-model hooks run last to first, and a jump skips the rest, so the limit counts the call first.
       citationCheck,
-      // "error": at the limit the run fails, instead of ending without a report and looking finished.
       modelCallLimitMiddleware({ runLimit: maxModelCalls, exitBehavior: "error" }),
-      // "ignore": other providers are skipped without a warning (OpenAI caches by itself).
       anthropicPromptCachingMiddleware({ unsupportedModelBehavior: "ignore" }),
     ],
-    // LangGraph stops after 25 graph steps, and each model call is several (middleware, model, tools): let the call limit decide.
   }).withConfig({ recursionLimit: 10 * maxModelCalls });
 }
 
 export type SreAgent = ReturnType<typeof createSreAgent>;
 
-// A normal end: Anthropic's stop_reason, OpenAI's finish_reason (Chat Completions) or status (Responses API).
 const FINISHED = ["end_turn", "stop", "completed"];
-
 function stopReason(m: AIMessage): string | undefined {
   const meta = m.response_metadata as { stop_reason?: string; finish_reason?: string; status?: string };
   return meta.stop_reason ?? meta.finish_reason ?? meta.status;
@@ -52,9 +45,6 @@ function finished(m: AIMessage): boolean {
 }
 
 const FIX_REQUEST = "Your report's citations don't match your tool calls:";
-
-// One chance to fix the report's citations, inside the run. The fix's call is counted, but a jump goes straight to
-// the model, past the limit's check: at most one call over the limit.
 const citationCheck = createMiddleware({
   name: "CitationCheck",
   afterModel: {
