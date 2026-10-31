@@ -5,7 +5,8 @@ import { loadConfig } from "../src/config.ts";
 const DATABASE_URL = "postgresql://user:pass@db.example:5432/agent";
 const BACKEND_AGENT_SERVICE_TOKEN = "t".repeat(32);
 const AGENT_GATEWAY_TOKEN = "a".repeat(32);
-const required = { ANTHROPIC_API_KEY: "k", DATABASE_URL, BACKEND_AGENT_SERVICE_TOKEN, AGENT_GATEWAY_TOKEN };
+const BACKEND_URL = "https://api.example";
+const required = { ANTHROPIC_API_KEY: "k", DATABASE_URL, BACKEND_AGENT_SERVICE_TOKEN, AGENT_GATEWAY_TOKEN, BACKEND_URL };
 
 test("defaults with only an Anthropic key", () => {
   const defaults = {
@@ -16,6 +17,7 @@ test("defaults with only an Anthropic key", () => {
     model: { provider: "anthropic", name: "claude-opus-5-5", effort: "high" },
     maxModelCalls: 30,
     backendAgentServiceToken: BACKEND_AGENT_SERVICE_TOKEN,
+    backendUrl: BACKEND_URL,
   };
   assert.deepEqual(loadConfig(required), defaults);
   // `KEY=` lines in a .env file count as unset.
@@ -41,11 +43,12 @@ test("set values are used", () => {
     model: { provider: "anthropic", name: "claude-haiku-5-5", effort: "low" },
     maxModelCalls: 10,
     backendAgentServiceToken: BACKEND_AGENT_SERVICE_TOKEN,
+    backendUrl: BACKEND_URL,
   });
 });
 
 test("openai needs its key and model; its effort is optional, with OpenAI's values", () => {
-  const openai = { MODEL_PROVIDER: "openai", OPENAI_API_KEY: "k", OPENAI_MODEL: "m", DATABASE_URL, BACKEND_AGENT_SERVICE_TOKEN, AGENT_GATEWAY_TOKEN };
+  const openai = { MODEL_PROVIDER: "openai", OPENAI_API_KEY: "k", OPENAI_MODEL: "m", DATABASE_URL, BACKEND_AGENT_SERVICE_TOKEN, AGENT_GATEWAY_TOKEN, BACKEND_URL };
   assert.throws(() => loadConfig({ ...openai, OPENAI_MODEL: "" }), /OPENAI_MODEL/);
   assert.deepEqual(loadConfig(openai).model, { provider: "openai", name: "m" });
   assert.deepEqual(loadConfig({ ...openai, MODEL_EFFORT: "minimal" }).model, { provider: "openai", name: "m", effort: "minimal" });
@@ -69,6 +72,8 @@ test("bad values are rejected", () => {
     ["BACKEND_AGENT_SERVICE_TOKEN", "t".repeat(31), /Too small.*\n.*at BACKEND_AGENT_SERVICE_TOKEN/],
     ["AGENT_GATEWAY_TOKEN", "", /expected string, received undefined\n.*at AGENT_GATEWAY_TOKEN/],
     ["AGENT_GATEWAY_TOKEN", "a".repeat(31), /Too small.*\n.*at AGENT_GATEWAY_TOKEN/],
+    ["BACKEND_URL", "", /expected string, received undefined\n.*at BACKEND_URL/],
+    ["BACKEND_URL", "staging.api.argussre.com", /Invalid URL\n.*at BACKEND_URL/],
   ];
   for (const [name, value, error] of cases) {
     assert.throws(() => loadConfig({ ...required, [name]: value }), error, name);
