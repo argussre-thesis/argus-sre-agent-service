@@ -40,7 +40,7 @@ createApp({
     log("error", "cannot listen", { host: config.host, port: config.port, error: err.message });
     process.exit(1);
   }
-  log("info", "agent service listening", { url: `http://${config.host}:${config.port}`, gatewayUrl: config.gatewayUrl, model: config.model });
+  log("info", "agent service listening", { url: `http://${config.host}:${config.port}`, gatewayUrl: config.gatewayUrl, backendUrl: config.backendUrl, model: config.model });
 });
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
