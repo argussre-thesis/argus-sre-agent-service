@@ -13,6 +13,7 @@ export type AppDeps = {
   maxModelCalls: number;
   gatewayUrl: string;
   agentGatewayToken: string;
+  backendUrl: string;
   backendAgentServiceToken: string;
 };
 

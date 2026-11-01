@@ -47,6 +47,8 @@ async function serve(model: ReturnType<typeof fakeModel>, gatewayUrl = gw.url) {
     maxModelCalls: 30,
     gatewayUrl,
     agentGatewayToken: "a".repeat(32),
+    // shortcut: fetch refuses port 9, so the "run ended" call fails and is logged; step 3 adds a fake backend.
+    backendUrl: "http://127.0.0.1:9",
     backendAgentServiceToken: token,
   }).listen(0, "127.0.0.1");
   await once(server, "listening");

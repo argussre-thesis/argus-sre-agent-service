@@ -1,6 +1,7 @@
 import { mapChatMessagesToStoredMessages } from "@langchain/core/messages";
 import { AIMessage, type BaseMessage } from "langchain";
 import { runWithGateway } from "../../agent/agent.ts";
+import { reason } from "../../agent/mcp.ts";
 import { incidentMessage } from "../../agent/prompts.ts";
 import { log } from "../../log.ts";
 import type { AppDeps } from "../app.ts";
@@ -63,9 +64,30 @@ export const getInvestigationMessagesService = async (tenantId: string, id: stri
   return ok(investigation);
 };
 
+const reportInvestigationEnded = async (
+  backendUrl: string,
+  backendAgentServiceToken: string,
+  tenantId: string,
+  incidentId: string,
+  investigationId: string,
+  status: string,
+  report: string | null,
+  error: string | null,
+) => {
+  const res = await fetch(new URL("/internal/v1/investigations/ended", backendUrl), {
+    method: "POST",
+    headers: { authorization: `Bearer ${backendAgentServiceToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ tenantId, incidentId, investigationId, status, report, error }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`the backend answered ${res.status}: ${await res.text()}`);
+  const { data } = (await res.json()) as { data: { posted: boolean } };
+  return data.posted;
+};
+
 // Saves the investigation with its incident, then runs it in the background: each step's messages are saved as they come.
 export const startInvestigationService = async (
-  { chatModel, model, effort, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken }: AppDeps,
+  { chatModel, model, effort, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, backendUrl, backendAgentServiceToken }: AppDeps,
   tenantId: string,
   { incidentId, cluster, title, alerts }: StartInvestigationBody,
 ) => {
@@ -100,7 +122,13 @@ export const startInvestigationService = async (
       },
     )
     .then((end) => prisma.investigation.update({ where: { id }, data: { ...end, finishedAt: new Date() } }))
-    .then(({ status }) => log("info", "investigation finished", { id, status, steps: seq - 1 }))
+    .then(({ status, report, error }) => {
+      log("info", "investigation finished", { id, status, steps: seq - 1 });
+      // A failed call only logged
+      reportInvestigationEnded(backendUrl, backendAgentServiceToken, tenantId, incidentId, id, status, report, error)
+        .then((posted) => log("info", "backend told the investigation ended", { id, posted }))
+        .catch((err: Error) => log("error", "cannot tell the backend the investigation ended", { id, error: reason(err) }));
+    })
     // The row then stays `running` until the next startup marks it failed.
     .catch((err: Error) => log("error", "cannot save the investigation's end", { id, error: err.stack ?? String(err) }));
   return ok({ id });

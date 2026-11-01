@@ -17,7 +17,7 @@ function capped(text: string): string {
 }
 
 // fetch says only "fetch failed"; the reason (e.g. ECONNREFUSED) is in its cause.
-function reason(err: unknown): string {
+export function reason(err: unknown): string {
   const cause = (err as Error).cause as Error | undefined;
   return `${(err as Error).message}${cause?.message ? `: ${cause.message}` : ""}`;
 }
