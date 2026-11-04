@@ -7,11 +7,12 @@ import * as z from "zod";
 
 // Fake gateway MCP endpoint, stateless like the real one, with one tool: records every request and tool call,
 // and answers each call with what the test last set.
-export async function fakeMcpGateway() {
+export async function fakeMcpGateway(inputSchema: z.ZodObject = z.strictObject({ namespace: z.string(), labelSelector: z.string().optional() })) {
   const requests: { url?: string; authorization?: string; method?: string }[] = [];
   const calls: unknown[] = [];
   let reply: CallToolResult = { content: [{ type: "text", text: "{}" }] };
   let held: Promise<void> | undefined;
+  let failing = 0;
   const server = createServer(async (req, res) => {
     // As the gateway: no stream for the client to open.
     if (req.method !== "POST") return void res.writeHead(405).end();
@@ -19,13 +20,14 @@ export async function fakeMcpGateway() {
     for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw);
     requests.push({ url: req.url, authorization: req.headers.authorization, method: body.method });
+    if (failing > 0 && failing--) return void res.writeHead(503).end("down");
     await held;
     const mcp = new McpServer({ name: "fake-gateway", version: "0" });
     mcp.registerTool(
       "list_pods",
       {
         description: "List the pods in a namespace.",
-        inputSchema: z.strictObject({ namespace: z.string(), labelSelector: z.string().optional() }),
+        inputSchema,
       },
       async (args) => {
         calls.push(args);
@@ -44,6 +46,10 @@ export async function fakeMcpGateway() {
     calls,
     answer(result: CallToolResult) {
       reply = result;
+    },
+    // The next `n` requests get a 503.
+    fail(n: number) {
+      failing = n;
     },
     // Holds every reply until the returned function is called, so a test can look at a run mid-flight.
     hold() {

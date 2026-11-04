@@ -110,7 +110,7 @@ export const startInvestigationService = async (
 
   let seq = messages.length;
   // Do not await, invetigation is running in background
-  runWithGateway(chatModel, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, { tenantId, cluster }, async (added) => {
+  runWithGateway(chatModel, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, tenantId, [cluster], async (added) => {
     await prisma.message.createMany({ data: messageRows(added, seq, model).map((row) => ({ ...row, investigationId: id })) });
     seq += added.length;
   })

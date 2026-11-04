@@ -7,12 +7,12 @@ import { fakeMcpGateway } from "./helpers.ts";
 
 const gw = await fakeMcpGateway();
 after(() => gw.close());
-const context = { tenantId: "t_1", cluster: "prod-eu" };
+const demo = { cluster: "prod-eu", namespace: "demo" };
 const agentGatewayToken = "a".repeat(32);
 
 const answer = (text: string, stop_reason = "end_turn") => new AIMessage({ content: text, response_metadata: { stop_reason } });
 const report = (evidence: string) => `## Summary\nx\n## Evidence\n${evidence}`;
-const demoPods = '`list_pods {"namespace":"demo"}`';
+const demoPods = '`list_pods {"cluster":"prod-eu","namespace":"demo"}`';
 // Not respondWithTools: its reply text joins every earlier message, which outgrows a string within 30 calls.
 const listPods = (args: Record<string, unknown>, id: string = crypto.randomUUID()) =>
   new AIMessage({ content: "", tool_calls: [{ name: "list_pods", args, id }] });
@@ -20,7 +20,7 @@ const listPods = (args: Record<string, unknown>, id: string = crypto.randomUUID(
 async function run(model: ReturnType<typeof fakeModel>, maxModelCalls = 30) {
   const steps: BaseMessage[][] = [];
   const messages = [new HumanMessage("api pods crash-looping in demo")];
-  const report = await runWithGateway(model, INVESTIGATION_PROMPT, maxModelCalls, gw.url, agentGatewayToken, messages, context, async (added) => {
+  const report = await runWithGateway(model, INVESTIGATION_PROMPT, maxModelCalls, gw.url, agentGatewayToken, messages, "t_1", ["prod-eu"], async (added) => {
     steps.push(added);
   });
   return { report, steps };
@@ -29,7 +29,7 @@ async function run(model: ReturnType<typeof fakeModel>, maxModelCalls = 30) {
 test("a tool call runs on the run's cluster, its result goes back, the report is returned", async () => {
   gw.answer({ content: [{ type: "text", text: '{"items":[]}' }] });
   const model = fakeModel()
-    .respond(listPods({ namespace: "demo" }, "call_1"))
+    .respond(listPods(demo, "call_1"))
     .respond(answer(report(`- No pods ${demoPods}`)));
   const { report: text, steps } = await run(model);
 
@@ -52,7 +52,7 @@ test("a tool call runs on the run's cluster, its result goes back, the report is
 test("a mistyped arg goes back to the model as an error, without a stack trace, and the run goes on", async () => {
   const sent = gw.calls.length;
   const model = fakeModel()
-    .respond(listPods({ namespce: "demo" }))
+    .respond(listPods({ cluster: "prod-eu", namespce: "demo" }))
     .respond(answer(report("None.")));
   assert.equal((await run(model)).report, report("None."));
 
@@ -69,7 +69,7 @@ test("a mistyped arg goes back to the model as an error, without a stack trace, 
 
 test("the call limit fails the run, before LangGraph's own step limit does", async () => {
   const model = fakeModel();
-  for (let i = 0; i < 31; i++) model.respond(listPods({ namespace: "demo" }));
+  for (let i = 0; i < 31; i++) model.respond(listPods(demo));
   await assert.rejects(run(model, 30), /Model call limits exceeded: run level call limit reached with 30 model calls/);
   assert.equal(model.callCount, 30);
 });
@@ -85,7 +85,7 @@ const wrong = report('- api-1 was OOMKilled `list_pods {"namespace":"prod"}`');
 const fixed = report(`- api-1 was OOMKilled ${demoPods}`);
 
 test("a report citing a call that never ran gets one chance to fix it", async () => {
-  const model = fakeModel().respond(listPods({ namespace: "demo" })).respond(answer(wrong)).respond(answer(fixed));
+  const model = fakeModel().respond(listPods(demo)).respond(answer(wrong)).respond(answer(fixed));
   const { report: text, steps } = await run(model);
 
   assert.equal(text, fixed);
@@ -105,9 +105,9 @@ test("a report citing a call that never ran gets one chance to fix it", async ()
 test("the fix's model call counts toward the call limit", async () => {
   // Calls: list_pods, wrong report, the fix gathering evidence, then a 4th that limit 3 must block.
   const model = fakeModel()
-    .respond(listPods({ namespace: "demo" }))
+    .respond(listPods(demo))
     .respond(answer(wrong))
-    .respond(listPods({ namespace: "demo" }))
+    .respond(listPods(demo))
     .respond(answer(fixed));
   await assert.rejects(run(model, 3), /run level call limit reached with 3 model calls/);
   assert.equal(model.callCount, 3);

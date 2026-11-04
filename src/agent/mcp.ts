@@ -4,8 +4,6 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { tool } from "langchain";
 import pkg from "../../package.json" with { type: "json" };
 
-export type OpsContext = { tenantId: string; cluster: string };
-
 const TIMEOUT_MS = 30_000;
 const MAX_RESULT_CHARS = 20_000;
 
@@ -22,27 +20,55 @@ export function reason(err: unknown): string {
   return `${(err as Error).message}${cause?.message ? `: ${cause.message}` : ""}`;
 }
 
-// One MCP client on the gateway's endpoint for one tenant and cluster, and its tools as LangChain tools.
-// The tools have no tenant or cluster argument: the URL decides, so the model can't leave the org.
-export async function connectGateway(gatewayUrl: string, token: string, ctx: OpsContext) {
-  const path = `/mcp/tenants/${encodeURIComponent(ctx.tenantId)}/clusters/${encodeURIComponent(ctx.cluster)}`;
+// An MCP client on the gateway's endpoint for one tenant and cluster: the URL decides both.
+async function open(gatewayUrl: string, token: string, tenantId: string, cluster: string): Promise<Client> {
+  const path = `/mcp/tenants/${encodeURIComponent(tenantId)}/clusters/${encodeURIComponent(cluster)}`;
   const client = new Client({ name: "argus-agent-service", version: pkg.version });
   const transport = new StreamableHTTPClientTransport(new URL(path, gatewayUrl), {
     requestInit: { headers: { authorization: `Bearer ${token}` } },
   });
-  let listed;
   try {
     await client.connect(transport, { timeout: TIMEOUT_MS });
-    listed = await client.listTools(undefined, { timeout: TIMEOUT_MS });
   } catch (err) {
     await client.close();
+    throw err;
+  }
+  return client;
+}
+
+export async function connectGateway(gatewayUrl: string, token: string, tenantId: string, clusters: string[]) {
+  const clients = new Map<string, Promise<Client>>();
+  const client = (cluster: string) => {
+    let connected = clients.get(cluster);
+    if (!connected) {
+      connected = open(gatewayUrl, token, tenantId, cluster);
+      clients.set(cluster, connected);
+      connected.catch(() => clients.delete(cluster));
+    }
+    return connected;
+  };
+  const close = async () => {
+    await Promise.allSettled([...clients.values()].map(async (c) => (await c).close()));
+  };
+
+  let listed;
+  try {
+    // Get tools from one cluster only
+    listed = await (await client(clusters[0]!)).listTools(undefined, { timeout: TIMEOUT_MS });
+  } catch (err) {
+    await close();
     throw new Error(`cannot reach the gateway: ${reason(err)}`);
   }
+  // Check 
+  const clash = listed.tools.find((t) => t.inputSchema.properties && "cluster" in t.inputSchema.properties);
+  if (clash) {
+    await close();
+    throw new Error(`the gateway's ${clash.name} tool has a "cluster" argument of its own`);
+  }
 
-  // Never throws: every outcome is text for the model.
-  const call = async (name: string, args: Record<string, unknown>) => {
-    try {
-      const result = (await client.callTool({ name, arguments: args }, undefined, { timeout: TIMEOUT_MS })) as CallToolResult;
+  const call = async (name: string, { cluster, ...args }: Record<string, unknown>) => {
+    try {            //call tool    // connect to cluster
+      const result = (await (await client(cluster as string)).callTool({ name, arguments: args }, undefined, { timeout: TIMEOUT_MS })) as CallToolResult;
       return capped(result.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("\n"));
     } catch (err) {
       return `Error GATEWAY_ERROR: ${reason(err)}`;
@@ -53,10 +79,14 @@ export async function connectGateway(gatewayUrl: string, token: string, ctx: Ops
     tool((args) => call(t.name, args as Record<string, unknown>), {
       name: t.name,
       description: t.description ?? "",
-      schema: t.inputSchema,
+      schema: {
+        ...t.inputSchema,
+        properties: { cluster: { type: "string", enum: clusters }, ...t.inputSchema.properties },
+        required: ["cluster", ...(t.inputSchema.required ?? [])],
+      },
       extras: { strict: true },
       verboseParsingErrors: true,
     }),
   );
-  return { tools, close: () => client.close() };
+  return { tools, close };
 }

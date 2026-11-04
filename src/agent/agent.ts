@@ -13,7 +13,7 @@ import {
 } from "langchain";
 import { citationProblems } from "./citations.ts";
 import { log } from "../log.ts";
-import { connectGateway, type OpsContext } from "./mcp.ts";
+import { connectGateway } from "./mcp.ts";
 
 export function createSreAgent(model: BaseChatModel, systemPrompt: string, tools: StructuredTool[], maxModelCalls: number) {
   return createAgent({
@@ -70,7 +70,7 @@ const citationCheck = createMiddleware({
 export async function runAgent(
   agent: SreAgent,
   messages: BaseMessage[],
-  context: OpsContext,
+  tenantId: string,
   onStep: (added: BaseMessage[]) => Promise<void>,
 ): Promise<string> {
   let all = messages;
@@ -78,7 +78,7 @@ export async function runAgent(
     if (state.messages.length === all.length) continue;
     const added = state.messages.slice(all.length);
     all = state.messages;
-    for (const m of added) if (AIMessage.isInstance(m)) logStep(m, context);
+    for (const m of added) if (AIMessage.isInstance(m)) logStep(m, tenantId);
     await onStep(added);
   }
   const last = all.at(-1);
@@ -95,21 +95,23 @@ export async function runWithGateway(
   gatewayUrl: string,
   agentGatewayToken: string,
   messages: BaseMessage[],
-  context: OpsContext,
+  tenantId: string,
+  clusters: string[],
   onStep: (added: BaseMessage[]) => Promise<void>,
 ): Promise<string> {
-  const gateway = await connectGateway(gatewayUrl, agentGatewayToken, context);
+  const gateway = await connectGateway(gatewayUrl, agentGatewayToken, tenantId, clusters);
   try {
-    return await runAgent(createSreAgent(model, systemPrompt, gateway.tools, maxModelCalls), messages, context, onStep);
+    return await runAgent(createSreAgent(model, systemPrompt, gateway.tools, maxModelCalls), messages, tenantId, onStep);
   } finally {
     await gateway.close();
   }
 }
 
-function logStep(m: AIMessage, context: OpsContext): void {
+// Each tool call's cluster is in its args.
+function logStep(m: AIMessage, tenantId: string): void {
   const u = m.usage_metadata;
   log("info", "model step", {
-    ...context,
+    tenantId,
     stopReason: stopReason(m),
     toolCalls: m.tool_calls?.map(({ name, args }) => ({ name, args })),
     tokens: u && {
