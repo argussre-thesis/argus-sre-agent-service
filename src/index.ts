@@ -3,7 +3,7 @@ import { failInterruptedInvestigationsService } from "./app/model/investigationM
 import { loadConfig, type Config } from "./config.ts";
 import { log } from "./log.ts";
 import { chatModel } from "./agent/chatModel.ts";
-import { INVESTIGATION_PROMPT } from "./agent/prompts.ts";
+import { CONVERSATION_PROMPT, INVESTIGATION_PROMPT } from "./agent/prompts.ts";
 
 let config: Config;
 try {
@@ -30,6 +30,7 @@ createApp({
   model: name,
   effort,
   systemPrompt: INVESTIGATION_PROMPT,
+  conversationPrompt: CONVERSATION_PROMPT,
   maxModelCalls: config.maxModelCalls,
   gatewayUrl: config.gatewayUrl,
   agentGatewayToken: config.agentGatewayToken,

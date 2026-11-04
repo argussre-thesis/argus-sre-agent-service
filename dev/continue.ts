@@ -4,7 +4,7 @@
 import { ChatAnthropic } from "@langchain/anthropic";
 import { mapStoredMessagesToChatMessages, type StoredMessage } from "@langchain/core/messages";
 import { AIMessage, HumanMessage, ToolMessage } from "langchain";
-import { runWithGateway } from "../src/agent/agent.ts";
+import { runWithGateway } from "../src/agent/sreAgent.ts";
 import { chatModel } from "../src/agent/chatModel.ts";
 import { prisma } from "../src/app/lib/prisma.ts";
 import { loadConfig } from "../src/config.ts";

@@ -9,7 +9,7 @@ import { mapStoredMessagesToChatMessages, type StoredMessage } from "@langchain/
 import { AIMessage, fakeModel } from "langchain";
 import { createApp } from "../src/app/app.ts";
 import { prisma } from "../src/app/lib/prisma.ts";
-import { INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
+import { CONVERSATION_PROMPT, INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
 import { fakeMcpGateway } from "./helpers.ts";
 
 const gw = await fakeMcpGateway();
@@ -64,6 +64,7 @@ async function serve(model: ReturnType<typeof fakeModel>, gatewayUrl = gw.url) {
     model: "fake:model",
     effort: "low",
     systemPrompt: INVESTIGATION_PROMPT,
+    conversationPrompt: CONVERSATION_PROMPT,
     maxModelCalls: 30,
     gatewayUrl,
     agentGatewayToken: "a".repeat(32),

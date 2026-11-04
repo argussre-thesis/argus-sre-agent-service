@@ -1,6 +1,6 @@
 import { mapChatMessagesToStoredMessages } from "@langchain/core/messages";
 import { AIMessage, type BaseMessage } from "langchain";
-import { runWithGateway } from "../../agent/agent.ts";
+import { runWithGateway } from "../../agent/sreAgent.ts";
 import { reason } from "../../agent/mcp.ts";
 import { incidentMessage } from "../../agent/prompts.ts";
 import { log } from "../../log.ts";
@@ -110,10 +110,12 @@ export const startInvestigationService = async (
 
   let seq = messages.length;
   // Do not await, invetigation is running in background
-  runWithGateway(chatModel, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, tenantId, [cluster], async (added) => {
+  runWithGateway(chatModel, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, tenantId, [cluster], 
+    async (added) => {
     await prisma.message.createMany({ data: messageRows(added, seq, model).map((row) => ({ ...row, investigationId: id })) });
     seq += added.length;
-  })
+    }
+  )
     .then(
       (report) => ({ status: "done" as const, report }),
       (err: Error) => {

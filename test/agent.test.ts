@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { AIMessage, type BaseMessage, fakeModel, HumanMessage, SystemMessage, ToolMessage } from "langchain";
-import { runWithGateway } from "../src/agent/agent.ts";
+import { runWithGateway } from "../src/agent/sreAgent.ts";
 import { INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
 import { fakeMcpGateway } from "./helpers.ts";
 

@@ -66,7 +66,7 @@ export async function connectGateway(gatewayUrl: string, token: string, tenantId
     throw new Error(`the gateway's ${clash.name} tool has a "cluster" argument of its own`);
   }
 
-  // With one cluster the tools have no cluster argument: the call goes to that one.
+  // by default cluster[0], tool can override it. 
   const call = async (name: string, { cluster = clusters[0], ...args }: Record<string, unknown>) => {
     try {            //call tool    // connect to cluster
       const result = (await (await client(cluster as string)).callTool({ name, arguments: args }, undefined, { timeout: TIMEOUT_MS })) as CallToolResult;
