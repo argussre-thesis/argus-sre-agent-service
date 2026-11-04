@@ -7,12 +7,12 @@ import { fakeMcpGateway } from "./helpers.ts";
 
 const gw = await fakeMcpGateway();
 after(() => gw.close());
-const demo = { cluster: "prod-eu", namespace: "demo" };
+const demo = { namespace: "demo" };
 const agentGatewayToken = "a".repeat(32);
 
 const answer = (text: string, stop_reason = "end_turn") => new AIMessage({ content: text, response_metadata: { stop_reason } });
 const report = (evidence: string) => `## Summary\nx\n## Evidence\n${evidence}`;
-const demoPods = '`list_pods {"cluster":"prod-eu","namespace":"demo"}`';
+const demoPods = '`list_pods {"namespace":"demo"}`';
 // Not respondWithTools: its reply text joins every earlier message, which outgrows a string within 30 calls.
 const listPods = (args: Record<string, unknown>, id: string = crypto.randomUUID()) =>
   new AIMessage({ content: "", tool_calls: [{ name: "list_pods", args, id }] });
@@ -52,7 +52,7 @@ test("a tool call runs on the run's cluster, its result goes back, the report is
 test("a mistyped arg goes back to the model as an error, without a stack trace, and the run goes on", async () => {
   const sent = gw.calls.length;
   const model = fakeModel()
-    .respond(listPods({ cluster: "prod-eu", namespce: "demo" }))
+    .respond(listPods({ namespce: "demo" }))
     .respond(answer(report("None.")));
   assert.equal((await run(model)).report, report("None."));
 

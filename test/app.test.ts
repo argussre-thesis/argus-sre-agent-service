@@ -53,10 +53,10 @@ const start = {
 const alert = start.alerts[0]!;
 const token = "t".repeat(32);
 const auth = { authorization: `Bearer ${token}` };
-const report = '## Summary\nx\n## Evidence\n- No pods `list_pods {"cluster":"prod-eu","namespace":"demo"}`';
+const report = '## Summary\nx\n## Evidence\n- No pods `list_pods {"namespace":"demo"}`';
 const reportReply = () => new AIMessage({ content: report, response_metadata: { stop_reason: "end_turn" } });
 const toolCallReply = () =>
-  new AIMessage({ content: "", tool_calls: [{ name: "list_pods", args: { cluster: "prod-eu", namespace: "demo" }, id: "call_1" }] });
+  new AIMessage({ content: "", tool_calls: [{ name: "list_pods", args: { namespace: "demo" }, id: "call_1" }] });
 
 async function serve(model: ReturnType<typeof fakeModel>, gatewayUrl = gw.url) {
   const server = createApp({
@@ -141,7 +141,7 @@ test("a start answers 202 at once, the run goes on in the background, and the re
     .respond(
       new AIMessage({
         content: "",
-        tool_calls: [{ name: "list_pods", args: { cluster: "prod-eu", namespace: "demo" }, id: "call_1" }],
+        tool_calls: [{ name: "list_pods", args: { namespace: "demo" }, id: "call_1" }],
         usage_metadata: usage(1561, 0, 0, 100),
       }),
     )

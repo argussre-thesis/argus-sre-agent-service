@@ -9,7 +9,7 @@ import * as z from "zod";
 import { fakeMcpGateway } from "./helpers.ts";
 
 const TOKEN = "a".repeat(32);
-const demo = { cluster: "minikube", namespace: "demo" };
+const demo = { namespace: "demo" };
 
 async function connect(t: TestContext, tenantId = "t_1", clusters = ["minikube"], urlSuffix = "") {
   const gw = await fakeMcpGateway();
@@ -21,16 +21,33 @@ async function connect(t: TestContext, tenantId = "t_1", clusters = ["minikube"]
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] });
 
-test("the gateway's tools, as Claude receives them: its schema plus a required cluster, nothing else allowed, strict", async (t) => {
-  const { tools } = await connect(t, "t_1", ["prod-eu", "prod-us"]);
+type Sent = {
+  name: string;
+  description: string;
+  strict?: boolean;
+  input_schema: { properties: Record<string, unknown>; required: string[]; additionalProperties: boolean };
+};
+function asClaudeReceivesThem(tools: Awaited<ReturnType<typeof connect>>["tools"]) {
   process.env.ANTHROPIC_API_KEY ??= "test";
-  type Sent = {
-    name: string;
-    description: string;
-    strict?: boolean;
-    input_schema: { properties: Record<string, unknown>; required: string[]; additionalProperties: boolean };
-  };
-  const sent = new ChatAnthropic({ model: "claude-haiku-5-5" }).invocationParams({ tools }).tools as unknown as Sent[];
+  return new ChatAnthropic({ model: "claude-haiku-5-5" }).invocationParams({ tools }).tools as unknown as Sent[];
+}
+
+test("one cluster: the gateway's schema as it is, strict, and every call goes to that cluster", async (t) => {
+  const { gw, listPods, tools } = await connect(t, "t_1", ["minikube"]);
+  const [{ strict, input_schema: schema }] = asClaudeReceivesThem(tools) as [Sent];
+  assert.equal(strict, true);
+  assert.deepEqual(Object.keys(schema.properties), ["namespace", "labelSelector"]);
+  assert.deepEqual(schema.required, ["namespace"]);
+  assert.equal(schema.additionalProperties, false);
+
+  await listPods.invoke(demo);
+  assert.deepEqual(gw.calls, [demo]);
+  assert.equal(gw.requests.at(-1)?.url, "/mcp/tenants/t_1/clusters/minikube");
+});
+
+test("several clusters: the gateway's tools, as Claude receives them: its schema plus a required cluster, nothing else allowed, strict", async (t) => {
+  const { tools } = await connect(t, "t_1", ["prod-eu", "prod-us"]);
+  const sent = asClaudeReceivesThem(tools);
   assert.equal(sent.length, 1);
   const [{ name, description, strict, input_schema: schema }] = sent as [Sent];
   assert.deepEqual({ name, description, strict }, { name: "list_pods", description: "List the pods in a namespace.", strict: true });
@@ -118,10 +135,9 @@ test("bad args are rejected with the reason, before any call", async (t) => {
   const { gw, listPods } = await connect(t);
   const cases: [object, RegExp][] = [
     [{}, /required/],
-    [{ namespace: "demo" }, /required property "cluster"/],
-    [{ cluster: "prod-eu", namespace: "demo" }, /enum/],
+    [{ cluster: "minikube", ...demo }, /additionalProperties/],
     [{ ...demo, extra: 1 }, /additionalProperties/],
-    [{ cluster: "minikube", namespace: 1 }, /type/],
+    [{ namespace: 1 }, /type/],
     [{ ...demo, labelSelector: null }, /type/],
   ];
   for (const [args, details] of cases) {
@@ -132,6 +148,13 @@ test("bad args are rejected with the reason, before any call", async (t) => {
       return true;
     });
   }
+  assert.deepEqual(gw.calls, []);
+});
+
+test("several clusters: the cluster is required and must be one of them, before any call", async (t) => {
+  const { gw, listPods } = await connect(t, "t_1", ["minikube", "civo"]);
+  await assert.rejects(listPods.invoke(demo as never), /required property "cluster"/);
+  await assert.rejects(listPods.invoke({ cluster: "prod-eu", ...demo } as never), /enum/);
   assert.deepEqual(gw.calls, []);
 });
 

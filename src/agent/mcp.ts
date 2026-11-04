@@ -66,7 +66,8 @@ export async function connectGateway(gatewayUrl: string, token: string, tenantId
     throw new Error(`the gateway's ${clash.name} tool has a "cluster" argument of its own`);
   }
 
-  const call = async (name: string, { cluster, ...args }: Record<string, unknown>) => {
+  // With one cluster the tools have no cluster argument: the call goes to that one.
+  const call = async (name: string, { cluster = clusters[0], ...args }: Record<string, unknown>) => {
     try {            //call tool    // connect to cluster
       const result = (await (await client(cluster as string)).callTool({ name, arguments: args }, undefined, { timeout: TIMEOUT_MS })) as CallToolResult;
       return capped(result.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("\n"));
@@ -79,11 +80,14 @@ export async function connectGateway(gatewayUrl: string, token: string, tenantId
     tool((args) => call(t.name, args as Record<string, unknown>), {
       name: t.name,
       description: t.description ?? "",
-      schema: {
-        ...t.inputSchema,
-        properties: { cluster: { type: "string", enum: clusters }, ...t.inputSchema.properties },
-        required: ["cluster", ...(t.inputSchema.required ?? [])],
-      },
+      schema:
+        clusters.length === 1
+          ? t.inputSchema
+          : {
+              ...t.inputSchema,
+              properties: { cluster: { type: "string", enum: clusters }, ...t.inputSchema.properties },
+              required: ["cluster", ...(t.inputSchema.required ?? [])],
+            },
       extras: { strict: true },
       verboseParsingErrors: true,
     }),

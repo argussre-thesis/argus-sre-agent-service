@@ -71,6 +71,7 @@ export async function runAgent(
   agent: SreAgent,
   messages: BaseMessage[],
   tenantId: string,
+  clusters: string[],
   onStep: (added: BaseMessage[]) => Promise<void>,
 ): Promise<string> {
   let all = messages;
@@ -78,7 +79,7 @@ export async function runAgent(
     if (state.messages.length === all.length) continue;
     const added = state.messages.slice(all.length);
     all = state.messages;
-    for (const m of added) if (AIMessage.isInstance(m)) logStep(m, tenantId);
+    for (const m of added) if (AIMessage.isInstance(m)) logStep(m, tenantId, clusters);
     await onStep(added);
   }
   const last = all.at(-1);
@@ -101,17 +102,17 @@ export async function runWithGateway(
 ): Promise<string> {
   const gateway = await connectGateway(gatewayUrl, agentGatewayToken, tenantId, clusters);
   try {
-    return await runAgent(createSreAgent(model, systemPrompt, gateway.tools, maxModelCalls), messages, tenantId, onStep);
+    return await runAgent(createSreAgent(model, systemPrompt, gateway.tools, maxModelCalls), messages, tenantId, clusters, onStep);
   } finally {
     await gateway.close();
   }
 }
 
-// Each tool call's cluster is in its args.
-function logStep(m: AIMessage, tenantId: string): void {
+function logStep(m: AIMessage, tenantId: string, clusters: string[]): void {
   const u = m.usage_metadata;
   log("info", "model step", {
     tenantId,
+    clusters,
     stopReason: stopReason(m),
     toolCalls: m.tool_calls?.map(({ name, args }) => ({ name, args })),
     tokens: u && {
