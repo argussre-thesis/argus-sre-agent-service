@@ -135,7 +135,7 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
 
 test("MCP server tokens are not echoed in a 400, and a run accepted with them doesn't store them", async () => {
   const api = await serve(fakeModel().respond(reportReply()));
-  const mcpServer = { name: "prod-grafana", url: "https://mcp.example.com/", token: "server-token" };
+  const mcpServer = { name: "prod-grafana", url: "https://127.0.0.1/", token: "server-token" };
 
   const rejected = await api.post({ ...start, incidentId: randomUUID(), mcpServers: [{ ...mcpServer, name: "Bad_Name" }] });
   assert.equal(rejected.status, 400);
@@ -147,6 +147,10 @@ test("MCP server tokens are not echoed in a 400, and a run accepted with them do
   await api.finished(id);
   const row = await prisma.investigation.findUniqueOrThrow({ where: { id }, include: { messages: true } });
   assert.doesNotMatch(JSON.stringify(row), /server-token/);
+  // The note about the blocked server is saved after the alert, in order.
+  const stored = row.messages.toSorted((a, b) => a.seq - b.seq).map((m) => JSON.stringify(m.data));
+  assert.match(stored[0]!, /Pod is crash looping/);
+  assert.match(stored[1]!, /prod-grafana: .*127\.0\.0\.1 is not a public address/);
 });
 
 test("a start answers 202 at once, the run goes on in the background, and the report and transcript are read", async () => {

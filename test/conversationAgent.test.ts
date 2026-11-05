@@ -19,6 +19,10 @@ test("an MCP server that can't be used doesn't fail the turn, with or without cl
   for (const clusters of [["prod-eu"], []]) {
     const model = fakeModel().respond(reply("Answered anyway."));
     assert.equal(await turn(model, clusters, gw.url, blocked), "Answered anyway.");
+    // The thread's message stays last: the prompt says the last message is the one addressed to the model.
+    const [, note, thread] = model.calls[0]!.messages;
+    assert.match(note!.text, /grafana: "127\.0\.0\.1 is not a public address"/);
+    assert.equal(thread!.text, "how is it?");
   }
 });
 

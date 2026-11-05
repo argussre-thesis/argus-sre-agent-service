@@ -52,7 +52,7 @@ const incident = (incidentId: string) => ({
   title: "Pod is crash looping.",
   alerts: [{ status: "FIRING", startsAt: "2026-10-21T09:00:00Z", labels: { alertname: "KubePodCrashLooping" }, annotations: {} }],
 });
-const mcpServer = { name: "prod-grafana", url: "https://mcp.example.com/", token: "server-token" };
+const mcpServer = { name: "prod-grafana", url: "https://127.0.0.1/", token: "server-token" };
 const investigation = async (incidentId: string, status: "running" | "done" | "failed", report: string | null, error: string | null, tenantId = tenant) => {
   await prisma.investigation.create({ data: { tenantId, cluster: "prod-eu", incidentId, model: "fake:model", systemPrompt: "x", status, report, error } });
   // startedAt orders the runs, so the next one must get a later time.
@@ -94,8 +94,8 @@ async function serve(model: ReturnType<typeof fakeModel>, backendAt = backendUrl
       await endedCalls(body.externalId, before + 1);
       const [system, ...rest] = model.calls[calls]!.messages;
       assert.equal(system!.text, CONVERSATION_PROMPT);
-      assert.equal(rest.length, 1);
-      return rest[0]!.text;
+      assert.equal(rest.length, body.mcpServers ? 2 : 1);
+      return rest.map((m) => m.text).join("\n\n");
     },
   };
 }
@@ -129,6 +129,7 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
 test("a turn is accepted with MCP servers, and the token never reaches the model", async () => {
   const api = await serve(fakeModel().respond(reply("Healthy.")));
   const message = await api.turn({ externalId: thread(), text: "how is it?", mcpServers: [mcpServer] });
+  assert.match(message, /prod-grafana: "127\.0\.0\.1 is not a public address"/);
   assert.doesNotMatch(message, /server-token/);
 });
 

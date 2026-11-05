@@ -10,6 +10,7 @@ import {
 } from "langchain";
 import { runAgent } from "./agent.ts";
 import { connectTools, type McpServer } from "./mcp.ts";
+import { unusableSystemsMessage } from "./prompts.ts";
 
 // Answers are free-form, so unlike an investigation there is no citation check.
 function createConversationAgent(model: BaseChatModel, systemPrompt: string, tools: StructuredTool[], maxModelCalls: number) {
@@ -42,9 +43,10 @@ export async function runConversationTurn(
   clusters: string[],
   mcpServers: McpServer[],
 ): Promise<string> {
-  const { tools, close } = await connectTools(gatewayUrl, agentGatewayToken, tenantId, clusters, mcpServers);
+  const { tools, failed, close } = await connectTools(gatewayUrl, agentGatewayToken, tenantId, clusters, mcpServers);
   try {
-    return await runAgent(createConversationAgent(model, systemPrompt, tools, maxModelCalls), messages, tenantId, clusters, keepNothing);
+    const note = failed.length > 0 ? [unusableSystemsMessage(failed)] : [];
+    return await runAgent(createConversationAgent(model, systemPrompt, tools, maxModelCalls), [...note, ...messages], tenantId, clusters, keepNothing);
   } finally {
     await close();
   }

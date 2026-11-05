@@ -31,9 +31,16 @@ test("an MCP server that can't be used doesn't fail the investigation, and gatew
   const model = fakeModel()
     .respond(listPods(demo, "call_1"))
     .respond(answer(report(`- No pods ${demoPods}`)));
-  const { report: text } = await run(model, 30, [{ name: "grafana", url: "https://127.0.0.1/", token: "x" }]);
+  const { report: text, steps } = await run(model, 30, [{ name: "grafana", url: "https://127.0.0.1/", token: "x" }]);
   assert.equal(text, report(`- No pods ${demoPods}`));
   assert.ok(ToolMessage.isInstance(model.calls[1]!.messages.at(-1)));
+
+  // The model is told after the alert, and the note is saved before any step, once.
+  const [, alert, note] = model.calls[0]!.messages;
+  assert.match(alert!.text, /crash-looping/);
+  assert.match(note!.text, /grafana: "127\.0\.0\.1 is not a public address"/);
+  assert.deepEqual(steps[0]!.map((m) => m.text), [note!.text]);
+  assert.equal(steps.flat().filter((m) => m.text === note!.text).length, 1);
 });
 
 test("a tool call runs on the run's cluster, its result goes back, the report is returned", async () => {
