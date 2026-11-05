@@ -9,13 +9,24 @@ const alertSchema = z.strictObject({
   annotations: z.record(z.string(), z.string()),
 });
 
-// The incident as the backend has it
-export const startInvestigationSchema = z.strictObject({
+export const incidentSchema = z.strictObject({
   incidentId: z.string().min(1),
   cluster: z.string().min(1),
   title: z.string().min(1),
   alerts: z.array(alertSchema).min(1),
 });
+
+export const mcpServersSchema = z
+  .array(
+    z.strictObject({
+      name: z.string().regex(/^[a-z0-9-]{1,20}$/),
+      url: z.string().min(1),
+      token: z.string().min(1),
+    }),
+  )
+  .default([]);
+
+export const startInvestigationSchema = incidentSchema.extend({ mcpServers: mcpServersSchema });
 export type StartInvestigationBody = z.infer<typeof startInvestigationSchema>;
 
 export const listInvestigationsQuerySchema = z.object({

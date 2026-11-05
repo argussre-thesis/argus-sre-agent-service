@@ -41,13 +41,13 @@ const newestRun = async (tenantId: string, incidentId: string) => {
 export const sendConversationMessageService = async (
   { chatModel, conversationPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, backendUrl, backendAgentServiceToken }: AppDeps,
   tenantId: string,
-  { externalId, text, clusters, incident }: ConversationMessageBody,
+  { externalId, text, clusters, incident, mcpServers }: ConversationMessageBody,
 ) => {
   const run = incident && (await newestRun(tenantId, incident.incidentId));
   const messages = [conversationMessage(text, clusters, incident, run)];
   log("info", "conversation turn started", { tenantId, externalId });
 
-  runConversationTurn(chatModel, conversationPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, tenantId, clusters)
+  runConversationTurn(chatModel, conversationPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, tenantId, clusters, mcpServers)
     .then(
       (reply) => ({ status: "done" as const, reply, error: null }),
       (err: Error) => {

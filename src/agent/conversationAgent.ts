@@ -9,7 +9,7 @@ import {
   ToolInvocationError,
 } from "langchain";
 import { runAgent } from "./agent.ts";
-import { connectGateway } from "./mcp.ts";
+import { connectGateway, type McpServer } from "./mcp.ts";
 
 // Answers are free-form, so unlike an investigation there is no citation check.
 function createConversationAgent(model: BaseChatModel, systemPrompt: string, tools: StructuredTool[], maxModelCalls: number) {
@@ -40,6 +40,7 @@ export async function runConversationTurn(
   messages: BaseMessage[],
   tenantId: string,
   clusters: string[],
+  mcpServers: McpServer[],
 ): Promise<string> {
   if (clusters.length === 0) {
     return runAgent(createConversationAgent(model, systemPrompt, [], maxModelCalls), messages, tenantId, clusters, keepNothing);

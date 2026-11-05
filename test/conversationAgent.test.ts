@@ -12,7 +12,7 @@ const reply = (text: string) => new AIMessage({ content: text, response_metadata
 const listPods = (args: Record<string, unknown>) => new AIMessage({ content: "", tool_calls: [{ name: "list_pods", args, id: "call_1" }] });
 
 const turn = (model: ReturnType<typeof fakeModel>, clusters: string[], gatewayUrl = gw.url) =>
-  runConversationTurn(model, CONVERSATION_PROMPT, 10, gatewayUrl, "a".repeat(32), [new HumanMessage("how is it?")], "t_1", clusters);
+  runConversationTurn(model, CONVERSATION_PROMPT, 10, gatewayUrl, "a".repeat(32), [new HumanMessage("how is it?")], "t_1", clusters, []);
 
 test("a plain answer with no report structure ends the turn: no citation check", async () => {
   const model = fakeModel().respond(reply("All pods look healthy."));

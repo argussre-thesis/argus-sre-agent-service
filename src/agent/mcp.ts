@@ -4,6 +4,8 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { tool } from "langchain";
 import pkg from "../../package.json" with { type: "json" };
 
+export type McpServer = { name: string; url: string; token: string };
+
 const TIMEOUT_MS = 30_000;
 const MAX_RESULT_CHARS = 20_000;
 

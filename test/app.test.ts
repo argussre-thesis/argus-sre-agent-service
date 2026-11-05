@@ -117,6 +117,10 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
     [{ ...start, alerts: [{ ...alert, annotations: undefined }] }, "VALIDATION_ERROR", /"alerts"/],
     [{ ...start, alerts: [{ ...alert, fingerprint: "abc" }] }, "VALIDATION_ERROR", /"alerts"/],
     [{ ...start, tenantId: "t_2" }, "VALIDATION_ERROR", /Unrecognized key: \\"tenantId\\"/],
+    [{ ...start, mcpServers: "grafana" }, "VALIDATION_ERROR", /"mcpServers"/],
+    [{ ...start, mcpServers: [{ name: "Bad_Name", url: "https://mcp.example.com/", token: "x" }] }, "VALIDATION_ERROR", /"mcpServers"/],
+    [{ ...start, mcpServers: [{ name: "grafana", url: "https://mcp.example.com/" }] }, "VALIDATION_ERROR", /"mcpServers"/],
+    [{ ...start, mcpServers: [{ name: "grafana", url: "", token: "x" }] }, "VALIDATION_ERROR", /"mcpServers"/],
     ['{"incidentId":', "INVALID_REQUEST_BODY", /JSON/],
   ];
   for (const [body, code, reason] of cases) {
@@ -127,6 +131,22 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
     assert.match(JSON.stringify(error), reason);
   }
   assert.equal(model.callCount, 0);
+});
+
+test("MCP server tokens are not echoed in a 400, and a run accepted with them doesn't store them", async () => {
+  const api = await serve(fakeModel().respond(reportReply()));
+  const mcpServer = { name: "prod-grafana", url: "https://mcp.example.com/", token: "server-token" };
+
+  const rejected = await api.post({ ...start, incidentId: randomUUID(), mcpServers: [{ ...mcpServer, name: "Bad_Name" }] });
+  assert.equal(rejected.status, 400);
+  assert.doesNotMatch(await rejected.text(), /server-token/);
+
+  const res = await api.post({ ...start, incidentId: randomUUID(), mcpServers: [mcpServer] });
+  assert.equal(res.status, 202);
+  const { id } = (await res.json()).data;
+  await api.finished(id);
+  const row = await prisma.investigation.findUniqueOrThrow({ where: { id }, include: { messages: true } });
+  assert.doesNotMatch(JSON.stringify(row), /server-token/);
 });
 
 test("a start answers 202 at once, the run goes on in the background, and the report and transcript are read", async () => {

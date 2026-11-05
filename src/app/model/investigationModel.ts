@@ -89,7 +89,7 @@ const reportInvestigationEnded = async (
 export const startInvestigationService = async (
   { chatModel, model, effort, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, backendUrl, backendAgentServiceToken }: AppDeps,
   tenantId: string,
-  { incidentId, cluster, title, alerts }: StartInvestigationBody,
+  { incidentId, cluster, title, alerts, mcpServers }: StartInvestigationBody,
 ) => {
   const messages = [incidentMessage({ cluster, title, alerts })];
   const created = await prisma.$transaction(async (tx) => {
@@ -110,7 +110,7 @@ export const startInvestigationService = async (
 
   let seq = messages.length;
   // Do not await, invetigation is running in background
-  runWithGateway(chatModel, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, tenantId, [cluster], 
+  runWithGateway(chatModel, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, tenantId, [cluster], mcpServers,
     async (added) => {
     await prisma.message.createMany({ data: messageRows(added, seq, model).map((row) => ({ ...row, investigationId: id })) });
     seq += added.length;

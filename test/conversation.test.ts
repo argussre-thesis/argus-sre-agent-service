@@ -52,6 +52,7 @@ const incident = (incidentId: string) => ({
   title: "Pod is crash looping.",
   alerts: [{ status: "FIRING", startsAt: "2026-10-21T09:00:00Z", labels: { alertname: "KubePodCrashLooping" }, annotations: {} }],
 });
+const mcpServer = { name: "prod-grafana", url: "https://mcp.example.com/", token: "server-token" };
 const investigation = async (incidentId: string, status: "running" | "done" | "failed", report: string | null, error: string | null, tenantId = tenant) => {
   await prisma.investigation.create({ data: { tenantId, cluster: "prod-eu", incidentId, model: "fake:model", systemPrompt: "x", status, report, error } });
   // startedAt orders the runs, so the next one must get a later time.
@@ -86,7 +87,7 @@ async function serve(model: ReturnType<typeof fakeModel>, backendAt = backendUrl
   return {
     send,
     // Sends a message and waits for its reply to reach the backend. Returns the one message the model got.
-    async turn(body: { externalId: string; text: string; incident?: ReturnType<typeof incident> }) {
+    async turn(body: { externalId: string; text: string; incident?: ReturnType<typeof incident>; mcpServers?: (typeof mcpServer)[] }) {
       const before = callsFor(body.externalId).length;
       const calls = model.callCount;
       assert.equal((await send(body)).status, 202);
@@ -111,6 +112,9 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
     [{ ...good, clusters: [""] }, /"clusters"/],
     [{ ...good, incident: { ...incident("inc"), alerts: [] } }, /"incident"/],
     [{ ...good, tenantId: "t_2" }, /Unrecognized key: \\"tenantId\\"/],
+    [{ ...good, mcpServers: [{ ...mcpServer, token: "" }] }, /"mcpServers"/],
+    // The list belongs on the request, not on the incident.
+    [{ ...good, incident: { ...incident("inc"), mcpServers: [mcpServer] } }, /"incident"/],
   ];
   for (const [body, why] of cases) {
     const res = await api.send(body);
@@ -120,6 +124,12 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
     assert.match(JSON.stringify(error), why);
   }
   assert.equal(model.callCount, 0);
+});
+
+test("a turn is accepted with MCP servers, and the token never reaches the model", async () => {
+  const api = await serve(fakeModel().respond(reply("Healthy.")));
+  const message = await api.turn({ externalId: thread(), text: "how is it?", mcpServers: [mcpServer] });
+  assert.doesNotMatch(message, /server-token/);
 });
 
 test("it answers 202 at once, and the reply reaches the backend when the turn ends", async () => {

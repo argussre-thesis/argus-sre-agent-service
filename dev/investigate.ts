@@ -35,6 +35,7 @@ const report = await runWithGateway(
   [incidentMessage({ cluster: "minikube", title: alert.annotations.summary, alerts: [alert] })],
   tenantId,
   ["minikube"],
+  [],
   async (added) => {
     for (const m of added) {
       if (ToolMessage.isInstance(m)) console.log(`  -> ${m.name}: ${m.status === "error" ? m.text : `${m.text.length} chars`}`);
