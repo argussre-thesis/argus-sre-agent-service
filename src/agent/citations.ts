@@ -1,9 +1,23 @@
 import { isDeepStrictEqual } from "node:util";
 import { AIMessage, type BaseMessage } from "langchain";
 
-// As the prompt asks for it: `list_pods {"namespace":"demo"}`.
-const CITATION = /`([a-z_]+) (\{[^`]*\})`/g;
 const ITEM = /^([-*]|\d+\.)\s+/;
+
+// As the prompt asks for it: `list_pods {"namespace":"demo"}`. Arguments can hold backticks (LogQL),
+// so a citation ends at the first }` that leaves valid JSON, or at the first }` if none does.
+function citationsIn(item: string) {
+  const found: { text: string; name: string; args: unknown }[] = [];
+  const start = /`([a-zA-Z0-9_-]+) (?=\{)/g;
+  for (let m = start.exec(item); m; m = start.exec(item)) {
+    const from = start.lastIndex;
+    const ends = [...item.slice(from).matchAll(/\}`/g)].map((e) => from + e.index + 1);
+    if (ends.length === 0) continue;
+    const end = ends.find((e) => parse(item.slice(from, e)) !== undefined) ?? ends[0]!;
+    found.push({ text: item.slice(m.index, end + 1), name: m[1]!, args: parse(item.slice(from, end)) });
+    start.lastIndex = end + 1;
+  }
+  return found;
+}
 
 // What's wrong with the report's Evidence: every item must cite a tool call, and every cited call must have run.
 export function citationProblems(report: string, messages: BaseMessage[]): string[] {
@@ -21,11 +35,11 @@ export function citationProblems(report: string, messages: BaseMessage[]): strin
 
   const calls = messages.flatMap((m) => (AIMessage.isInstance(m) ? (m.tool_calls ?? []) : []));
   return items.flatMap((item) => {
-    const cited = [...item.matchAll(CITATION)];
+    const cited = citationsIn(item);
     if (cited.length === 0) return [`no tool call cited in: "${item}"`];
     return cited
-      .filter(([, name, args]) => !calls.some((c) => c.name === name && isDeepStrictEqual(c.args, parse(args!))))
-      .map(([citation]) => `${citation} matches no tool call you made`);
+      .filter(({ name, args }) => !calls.some((c) => c.name === name && isDeepStrictEqual(c.args, args)))
+      .map(({ text }) => `${text} matches no tool call you made`);
   });
 }
 
