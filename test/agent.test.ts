@@ -17,14 +17,24 @@ const demoPods = '`list_pods {"namespace":"demo"}`';
 const listPods = (args: Record<string, unknown>, id: string = crypto.randomUUID()) =>
   new AIMessage({ content: "", tool_calls: [{ name: "list_pods", args, id }] });
 
-async function run(model: ReturnType<typeof fakeModel>, maxModelCalls = 30) {
+async function run(model: ReturnType<typeof fakeModel>, maxModelCalls = 30, mcpServers: { name: string; url: string; token: string }[] = []) {
   const steps: BaseMessage[][] = [];
   const messages = [new HumanMessage("api pods crash-looping in demo")];
-  const report = await runWithGateway(model, INVESTIGATION_PROMPT, maxModelCalls, gw.url, agentGatewayToken, messages, "t_1", ["prod-eu"], [], async (added) => {
+  const report = await runWithGateway(model, INVESTIGATION_PROMPT, maxModelCalls, gw.url, agentGatewayToken, messages, "t_1", ["prod-eu"], mcpServers, async (added) => {
     steps.push(added);
   });
   return { report, steps };
 }
+
+test("an MCP server that can't be used doesn't fail the investigation, and gateway tools still work", async () => {
+  gw.answer({ content: [{ type: "text", text: '{"items":[]}' }] });
+  const model = fakeModel()
+    .respond(listPods(demo, "call_1"))
+    .respond(answer(report(`- No pods ${demoPods}`)));
+  const { report: text } = await run(model, 30, [{ name: "grafana", url: "https://127.0.0.1/", token: "x" }]);
+  assert.equal(text, report(`- No pods ${demoPods}`));
+  assert.ok(ToolMessage.isInstance(model.calls[1]!.messages.at(-1)));
+});
 
 test("a tool call runs on the run's cluster, its result goes back, the report is returned", async () => {
   gw.answer({ content: [{ type: "text", text: '{"items":[]}' }] });

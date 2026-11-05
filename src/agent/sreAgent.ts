@@ -14,7 +14,7 @@ import {
 import { finished, runAgent } from "./agent.ts";
 import { citationProblems } from "./citations.ts";
 import { log } from "../log.ts";
-import { connectGateway, type McpServer } from "./mcp.ts";
+import { connectTools, type McpServer } from "./mcp.ts";
 
 export function createSreAgent(model: BaseChatModel, systemPrompt: string, tools: StructuredTool[], maxModelCalls: number) {
   return createAgent({
@@ -65,10 +65,10 @@ export async function runWithGateway(
   mcpServers: McpServer[],
   onStep: (added: BaseMessage[]) => Promise<void>,
 ): Promise<string> {
-  const gateway = await connectGateway(gatewayUrl, agentGatewayToken, tenantId, clusters);
+  const { tools, close } = await connectTools(gatewayUrl, agentGatewayToken, tenantId, clusters, mcpServers);
   try {
-    return await runAgent(createSreAgent(model, systemPrompt, gateway.tools, maxModelCalls), messages, tenantId, clusters, onStep);
+    return await runAgent(createSreAgent(model, systemPrompt, tools, maxModelCalls), messages, tenantId, clusters, onStep);
   } finally {
-    await gateway.close();
+    await close();
   }
 }

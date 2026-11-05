@@ -11,8 +11,16 @@ after(() => gw.close());
 const reply = (text: string) => new AIMessage({ content: text, response_metadata: { stop_reason: "end_turn" } });
 const listPods = (args: Record<string, unknown>) => new AIMessage({ content: "", tool_calls: [{ name: "list_pods", args, id: "call_1" }] });
 
-const turn = (model: ReturnType<typeof fakeModel>, clusters: string[], gatewayUrl = gw.url) =>
-  runConversationTurn(model, CONVERSATION_PROMPT, 10, gatewayUrl, "a".repeat(32), [new HumanMessage("how is it?")], "t_1", clusters, []);
+const turn = (model: ReturnType<typeof fakeModel>, clusters: string[], gatewayUrl = gw.url, mcpServers: { name: string; url: string; token: string }[] = []) =>
+  runConversationTurn(model, CONVERSATION_PROMPT, 10, gatewayUrl, "a".repeat(32), [new HumanMessage("how is it?")], "t_1", clusters, mcpServers);
+
+test("an MCP server that can't be used doesn't fail the turn, with or without clusters", async () => {
+  const blocked = [{ name: "grafana", url: "https://127.0.0.1/", token: "x" }];
+  for (const clusters of [["prod-eu"], []]) {
+    const model = fakeModel().respond(reply("Answered anyway."));
+    assert.equal(await turn(model, clusters, gw.url, blocked), "Answered anyway.");
+  }
+});
 
 test("a plain answer with no report structure ends the turn: no citation check", async () => {
   const model = fakeModel().respond(reply("All pods look healthy."));

@@ -6,7 +6,7 @@ import { ChatAnthropic } from "@langchain/anthropic";
 import { ToolInputParsingException } from "@langchain/core/tools";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { connectGateway, connectMcpServers } from "../src/agent/mcp.ts";
+import { connectGateway, connectMcpServers, connectTools } from "../src/agent/mcp.ts";
 import * as z from "zod";
 import { fakeMcpGateway } from "./helpers.ts";
 
@@ -288,6 +288,49 @@ test("a server with more pages of tools keeps the first and says so", async (t) 
   t.after(close);
   assert.deepEqual(tools.map((tool) => tool.name), ["grafana_ok"]);
   assert.deepEqual(failed, [{ name: "grafana", reason: "it has more tools than were read" }]);
+});
+
+test("a run gets the gateway's tools and the servers' tools, and each call reaches its own", async (t) => {
+  const [gw, grafana] = [await mcpServers(t), await mcpServers(t)];
+  const { tools, failed, close } = await connectTools(gw.url, TOKEN, "t_1", ["prod-eu"], [server("grafana", grafana.url)], fetch);
+  t.after(close);
+
+  assert.deepEqual(tools.map((tool) => tool.name), ["list_pods", "grafana_list_pods"]);
+  assert.deepEqual(failed, []);
+  await tools[1]!.invoke(demo);
+  assert.deepEqual([gw.calls, grafana.calls], [[], [demo]]);
+  await tools[0]!.invoke(demo);
+  assert.deepEqual([gw.calls, grafana.calls], [[demo], [demo]]);
+});
+
+test("with no clusters the gateway isn't contacted, and the servers' tools still arrive", async (t) => {
+  const [gw, grafana] = [await mcpServers(t), await mcpServers(t)];
+  const { tools, close } = await connectTools(gw.url, TOKEN, "t_1", [], [server("grafana", grafana.url)], fetch);
+  t.after(close);
+  assert.deepEqual(tools.map((tool) => tool.name), ["grafana_list_pods"]);
+  assert.deepEqual(gw.requests, []);
+
+  const none = await connectTools(gw.url, TOKEN, "t_1", [], [], fetch);
+  assert.deepEqual(none.tools, []);
+  await none.close();
+});
+
+test("a server's tool named like a gateway tool is left out and named, and the gateway's stays", async (t) => {
+  const [gw, clash] = [await mcpServers(t), await mcpServers(t)];
+  const { tools, failed, close } = await connectTools(gw.url, TOKEN, "t_1", ["prod-eu"], [server("list", clash.url)], listing([listedTool("pods"), listedTool("nodes")]));
+  t.after(close);
+
+  assert.deepEqual(tools.map((tool) => tool.name), ["list_pods", "list_nodes"]);
+  assert.deepEqual(failed, [{ name: "list", reason: "its tool list_pods has the same name as a built-in tool" }]);
+  await tools[0]!.invoke(demo);
+  assert.deepEqual([gw.calls, clash.calls], [[demo], []]);
+});
+
+test("an unreachable gateway fails the run, before any server is contacted", async (t) => {
+  const [gw, grafana] = [await mcpServers(t), await mcpServers(t)];
+  gw.fail(1);
+  await assert.rejects(connectTools(gw.url, TOKEN, "t_1", ["prod-eu"], [server("grafana", grafana.url)], fetch), /cannot reach the gateway/);
+  assert.deepEqual(grafana.requests, []);
 });
 
 test("during a run, a tool's error and a dead server come back to the model as text", async (t) => {

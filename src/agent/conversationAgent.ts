@@ -9,7 +9,7 @@ import {
   ToolInvocationError,
 } from "langchain";
 import { runAgent } from "./agent.ts";
-import { connectGateway, type McpServer } from "./mcp.ts";
+import { connectTools, type McpServer } from "./mcp.ts";
 
 // Answers are free-form, so unlike an investigation there is no citation check.
 function createConversationAgent(model: BaseChatModel, systemPrompt: string, tools: StructuredTool[], maxModelCalls: number) {
@@ -30,7 +30,7 @@ function createConversationAgent(model: BaseChatModel, systemPrompt: string, too
 // Nothing is kept from a turn's steps; runAgent logs their tokens.
 const keepNothing = async () => {};
 
-// One turn. With no clusters there is nothing to connect to, so the model has no tools.
+// One turn. With no clusters and no MCP servers the model has no tools.
 export async function runConversationTurn(
   model: BaseChatModel,
   systemPrompt: string,
@@ -42,13 +42,10 @@ export async function runConversationTurn(
   clusters: string[],
   mcpServers: McpServer[],
 ): Promise<string> {
-  if (clusters.length === 0) {
-    return runAgent(createConversationAgent(model, systemPrompt, [], maxModelCalls), messages, tenantId, clusters, keepNothing);
-  }
-  const gateway = await connectGateway(gatewayUrl, agentGatewayToken, tenantId, clusters);
+  const { tools, close } = await connectTools(gatewayUrl, agentGatewayToken, tenantId, clusters, mcpServers);
   try {
-    return await runAgent(createConversationAgent(model, systemPrompt, gateway.tools, maxModelCalls), messages, tenantId, clusters, keepNothing);
+    return await runAgent(createConversationAgent(model, systemPrompt, tools, maxModelCalls), messages, tenantId, clusters, keepNothing);
   } finally {
-    await gateway.close();
+    await close();
   }
 }

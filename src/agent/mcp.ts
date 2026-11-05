@@ -4,6 +4,7 @@ import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { tool } from "langchain";
 import pkg from "../../package.json" with { type: "json" };
+import { log } from "../log.ts";
 import { publicFetch } from "./publicFetch.ts";
 
 export type McpServer = { name: string; url: string; token: string };
@@ -163,6 +164,35 @@ export async function connectMcpServers(servers: McpServer[], fetchFn: FetchLike
     failed,
     close: async () => {
       await Promise.allSettled(reached.map((r) => r.client.close()));
+    },
+  };
+}
+
+// Everything one run can use. Only the gateway can fail the run; with no clusters it isn't contacted.
+export async function connectTools(
+  gatewayUrl: string,
+  token: string,
+  tenantId: string,
+  clusters: string[],
+  mcpServers: McpServer[],
+  fetchFn: FetchLike = publicFetch,
+) {
+  const gateway = clusters.length > 0 ? await connectGateway(gatewayUrl, token, tenantId, clusters) : { tools: [], close: async () => {} };
+  const mcp = await connectMcpServers(mcpServers, fetchFn);
+
+  const taken = new Set(gateway.tools.map((t) => t.name));
+  const clashing = mcp.tools.filter((t) => taken.has(t.name));
+  const failed = [
+    ...mcp.failed,
+    ...clashing.map((t) => ({ name: t.name.split("_")[0]!, reason: `its tool ${t.name} has the same name as a built-in tool` })),
+  ];
+  if (failed.length > 0) log("warn", "some MCP servers or tools can't be used", { tenantId, failed });
+
+  return {
+    tools: [...gateway.tools, ...mcp.tools.filter((t) => !taken.has(t.name))],
+    failed,
+    close: async () => {
+      await Promise.all([gateway.close(), mcp.close()]);
     },
   };
 }
