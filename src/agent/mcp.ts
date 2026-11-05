@@ -1,13 +1,17 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { tool } from "langchain";
 import pkg from "../../package.json" with { type: "json" };
+import { publicFetch } from "./publicFetch.ts";
 
 export type McpServer = { name: string; url: string; token: string };
 
 const TIMEOUT_MS = 30_000;
 const MAX_RESULT_CHARS = 20_000;
+const MAX_REASON_CHARS = 300;
+const VALID_TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
 
 function capped(text: string): string {
   if (text.length <= MAX_RESULT_CHARS) return text;
@@ -22,11 +26,12 @@ export function reason(err: unknown): string {
   return `${(err as Error).message}${cause?.message ? `: ${cause.message}` : ""}`;
 }
 
-// An MCP client on the gateway's endpoint for one tenant and cluster: the URL decides both.
-async function open(gatewayUrl: string, token: string, tenantId: string, cluster: string): Promise<Client> {
-  const path = `/mcp/tenants/${encodeURIComponent(tenantId)}/clusters/${encodeURIComponent(cluster)}`;
+const resultText = (result: CallToolResult) => capped(result.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("\n"));
+
+async function openClient(url: URL, token: string, fetchFn?: FetchLike): Promise<Client> {
   const client = new Client({ name: "argus-agent-service", version: pkg.version });
-  const transport = new StreamableHTTPClientTransport(new URL(path, gatewayUrl), {
+  const transport = new StreamableHTTPClientTransport(url, {
+    fetch: fetchFn,
     requestInit: { headers: { authorization: `Bearer ${token}` } },
   });
   try {
@@ -36,6 +41,11 @@ async function open(gatewayUrl: string, token: string, tenantId: string, cluster
     throw err;
   }
   return client;
+}
+
+function open(gatewayUrl: string, token: string, tenantId: string, cluster: string): Promise<Client> {
+  const path = `/mcp/tenants/${encodeURIComponent(tenantId)}/clusters/${encodeURIComponent(cluster)}`;
+  return openClient(new URL(path, gatewayUrl), token);
 }
 
 export async function connectGateway(gatewayUrl: string, token: string, tenantId: string, clusters: string[]) {
@@ -72,7 +82,7 @@ export async function connectGateway(gatewayUrl: string, token: string, tenantId
   const call = async (name: string, { cluster = clusters[0], ...args }: Record<string, unknown>) => {
     try {            //call tool    // connect to cluster
       const result = (await (await client(cluster as string)).callTool({ name, arguments: args }, undefined, { timeout: TIMEOUT_MS })) as CallToolResult;
-      return capped(result.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("\n"));
+      return resultText(result);
     } catch (err) {
       return `Error GATEWAY_ERROR: ${reason(err)}`;
     }
@@ -95,4 +105,64 @@ export async function connectGateway(gatewayUrl: string, token: string, tenantId
     }),
   );
   return { tools, close };
+}
+
+async function connectMcpServer({ name: server, url, token }: McpServer, fetchFn: FetchLike) {
+  const client = await openClient(new URL(url), token, fetchFn);
+  try {
+    const { tools: listed, nextCursor } = await client.listTools(undefined, { timeout: TIMEOUT_MS });
+    const seen = new Set<string>();
+    const usable = listed.filter((t) => {
+      const name = `${server}_${t.name}`;
+      if (!VALID_TOOL_NAME.test(name) || seen.has(name)) return false;
+      seen.add(name);
+      return true;
+    });
+
+    const call = async (name: string, args: Record<string, unknown>) => {
+      try {
+        const result = (await client.callTool({ name, arguments: args }, undefined, { timeout: TIMEOUT_MS })) as CallToolResult;
+        return result.isError ? `Error MCP_TOOL_ERROR: ${resultText(result)}` : resultText(result);
+      } catch (err) {
+        return `Error MCP_SERVER_ERROR: ${reason(err)}`.slice(0, MAX_RESULT_CHARS);
+      }
+    };
+
+    // Not strict: Anthropic allows few optional parameters across strict tools, and third-party schemas can have dozens.
+    const tools = usable.map((t) =>
+      tool((args) => call(t.name, args as Record<string, unknown>), {
+        name: `${server}_${t.name}`,
+        description: t.description ?? "",
+        schema: t.inputSchema,
+        verboseParsingErrors: true,
+      }),
+    );
+
+    const problems = [
+      ...(usable.length < listed.length ? [`${listed.length - usable.length} of its tools have names that can't be used`] : []),
+      ...(nextCursor ? ["it has more tools than were read"] : []),
+    ];
+    return { client, tools, problems };
+  } catch (err) {
+    await client.close();
+    throw err;
+  }
+}
+
+// A server that fails is left out and listed in `failed`, so it never fails the run.
+export async function connectMcpServers(servers: McpServer[], fetchFn: FetchLike = publicFetch) {
+  const connected = await Promise.allSettled(servers.map((server) => connectMcpServer(server, fetchFn)));
+  const reached = connected.flatMap((c) => (c.status === "fulfilled" ? [c.value] : []));
+  const failed = connected.flatMap((c, i) => {
+    const name = servers[i]!.name;
+    if (c.status === "rejected") return [{ name, reason: reason(c.reason).slice(0, MAX_REASON_CHARS) }];
+    return c.value.problems.map((problem) => ({ name, reason: problem }));
+  });
+  return {
+    tools: reached.flatMap((r) => r.tools),
+    failed,
+    close: async () => {
+      await Promise.allSettled(reached.map((r) => r.client.close()));
+    },
+  };
 }

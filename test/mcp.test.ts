@@ -4,7 +4,9 @@ import type { AddressInfo } from "node:net";
 import { test, type TestContext } from "node:test";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { ToolInputParsingException } from "@langchain/core/tools";
-import { connectGateway } from "../src/agent/mcp.ts";
+import { setTimeout as sleep } from "node:timers/promises";
+import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { connectGateway, connectMcpServers } from "../src/agent/mcp.ts";
 import * as z from "zod";
 import { fakeMcpGateway } from "./helpers.ts";
 
@@ -174,4 +176,127 @@ test("a gateway gone mid-run: the call returns why, as text", async (t) => {
   await gw.close();
   // RESET when the client reuses its kept-alive socket, REFUSED on a new one.
   assert.match(await listPods.invoke(demo), /^Error GATEWAY_ERROR: fetch failed: (read ECONNRESET|connect ECONNREFUSED)/);
+});
+
+// The test servers are local, which publicFetch refuses, so these tests use plain fetch unless they're about publicFetch.
+async function mcpServers(t: TestContext, inputSchema?: z.ZodObject) {
+  const gw = await fakeMcpGateway(inputSchema);
+  t.after(() => gw.close());
+  return gw;
+}
+const server = (name: string, url: string) => ({ name, url, token: `${name}-token` });
+
+test("an MCP server's tools get its name as a prefix, are not strict, and use its token", async (t) => {
+  const gw = await mcpServers(t);
+  const { tools, failed, close } = await connectMcpServers([server("prod-grafana", gw.url)], fetch);
+  t.after(close);
+
+  assert.deepEqual(failed, []);
+  const [{ name, description, strict }] = asClaudeReceivesThem(tools) as [Sent];
+  assert.deepEqual({ name, description, strict }, { name: "prod-grafana_list_pods", description: "List the pods in a namespace.", strict: undefined });
+  gw.answer(text('{"pods":[]}'));
+  assert.equal(await tools[0]!.invoke(demo), '{"pods":[]}');
+  assert.deepEqual(gw.calls, [demo]);
+  assert.equal(gw.requests.at(-1)?.method, "tools/call");
+  for (const r of gw.requests) assert.equal(r.authorization, "Bearer prod-grafana-token");
+});
+
+test("an MCP tool's own cluster argument reaches the server", async (t) => {
+  const gw = await mcpServers(t, z.strictObject({ cluster: z.string() }));
+  const { tools, close } = await connectMcpServers([server("grafana", gw.url)], fetch);
+  t.after(close);
+  await tools[0]!.invoke({ cluster: "prod-eu" });
+  assert.deepEqual(gw.calls, [{ cluster: "prod-eu" }]);
+});
+
+test("a server that fails is left out and named, and the others still work", async (t) => {
+  const [good, down] = [await mcpServers(t), await mcpServers(t)];
+  down.fail(1);
+  const { tools, failed, close } = await connectMcpServers(
+    [server("down", down.url), server("bad-url", "not a url"), server("good", good.url)],
+    fetch,
+  );
+  t.after(close);
+
+  assert.deepEqual(tools.map((tool) => tool.name), ["good_list_pods"]);
+  assert.deepEqual(failed, [
+    { name: "down", reason: "Streamable HTTP error: Error POSTing to endpoint: down" },
+    { name: "bad-url", reason: "Invalid URL" },
+  ]);
+});
+
+test("servers connect in parallel, so a slow one doesn't delay the others", async (t) => {
+  const [a, b] = [await mcpServers(t), await mcpServers(t)];
+  const release = [a.hold(), b.hold()];
+  const connecting = connectMcpServers([server("a", a.url), server("b", b.url)], fetch);
+  for (let i = 0; i < 100 && !(a.requests.length && b.requests.length); i++) await sleep(10);
+  assert.deepEqual([a.requests.length, b.requests.length], [1, 1]);
+  release.forEach((r) => r());
+  t.after((await connecting).close);
+});
+
+test("by default a non-https or private address fails that server, with no request sent", async (t) => {
+  const gw = await mcpServers(t);
+  const port = new URL(gw.url).port;
+  const { tools, failed } = await connectMcpServers([
+    server("plain", gw.url),
+    server("loopback", `https://127.0.0.1:${port}/`),
+    server("metadata", "https://169.254.169.254/"),
+    server("local", `https://localhost:${port}/`),
+  ]);
+
+  assert.deepEqual(tools, []);
+  assert.deepEqual(failed, [
+    { name: "plain", reason: "the URL must use https" },
+    { name: "loopback", reason: "127.0.0.1 is not a public address" },
+    { name: "metadata", reason: "169.254.169.254 is not a public address" },
+    { name: "local", reason: "fetch failed: localhost is not a public address" },
+  ]);
+  assert.deepEqual(gw.requests, []);
+});
+
+test("a failure's reason is cut short, since it comes from the server and reaches the model", async (t) => {
+  const huge: FetchLike = async () => new Response("x".repeat(100_000), { status: 500 });
+  const { failed } = await connectMcpServers([server("huge", "https://mcp.example.com/")], huge);
+  assert.equal(failed.length, 1);
+  assert.equal(failed[0]!.reason.length, 300);
+});
+
+// Answers tools/list itself, so a test can give any list. The rest goes to the fake server.
+const listing =
+  (tools: object[], nextCursor?: string): FetchLike =>
+  async (url, init) => {
+    const body = init?.method === "POST" ? JSON.parse(String(init.body)) : undefined;
+    if (body?.method !== "tools/list") return fetch(url, init);
+    return Response.json({ jsonrpc: "2.0", id: body.id, result: { tools, nextCursor } });
+  };
+const listedTool = (name: string) => ({ name, inputSchema: { type: "object" } });
+
+test("a tool with an unusable name is left out and counted, and the rest of the server works", async (t) => {
+  const gw = await mcpServers(t);
+  const list = [listedTool("ok"), listedTool("has space"), listedTool("dotted.name"), listedTool("x".repeat(60)), listedTool("ok")];
+  const { tools, failed, close } = await connectMcpServers([server("grafana", gw.url)], listing(list));
+  t.after(close);
+
+  assert.deepEqual(tools.map((tool) => tool.name), ["grafana_ok"]);
+  assert.deepEqual(failed, [{ name: "grafana", reason: "4 of its tools have names that can't be used" }]);
+});
+
+test("a server with more pages of tools keeps the first and says so", async (t) => {
+  const gw = await mcpServers(t);
+  const { tools, failed, close } = await connectMcpServers([server("grafana", gw.url)], listing([listedTool("ok")], "page-2"));
+  t.after(close);
+  assert.deepEqual(tools.map((tool) => tool.name), ["grafana_ok"]);
+  assert.deepEqual(failed, [{ name: "grafana", reason: "it has more tools than were read" }]);
+});
+
+test("during a run, a tool's error and a dead server come back to the model as text", async (t) => {
+  const gw = await mcpServers(t);
+  const { tools, close } = await connectMcpServers([server("grafana", gw.url)], fetch);
+  t.after(close);
+
+  gw.answer({ ...text("no such datasource"), isError: true });
+  assert.equal(await tools[0]!.invoke(demo), "Error MCP_TOOL_ERROR: no such datasource");
+  await gw.close();
+  assert.match(await tools[0]!.invoke(demo), /^Error MCP_SERVER_ERROR: fetch failed/);
 });
