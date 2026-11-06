@@ -201,6 +201,22 @@ test("an MCP server's tools get its name as a prefix, are not strict, and use it
   for (const r of gw.requests) assert.equal(r.authorization, "Bearer prod-grafana-token");
 });
 
+test("an MCP server with headers sends exactly those on every request, with no Bearer token", async (t) => {
+  const gw = await mcpServers(t);
+  const headers = { "api-key": "secret-key", authorization: "Token secret-token" };
+  const { tools, failed, close } = await connectMcpServers([{ name: "pagerduty", url: gw.url, headers }], fetch);
+  t.after(close);
+
+  assert.deepEqual(failed, []);
+  gw.answer(text("{}"));
+  await tools[0]!.invoke(demo);
+  assert.equal(gw.requests.at(-1)?.method, "tools/call");
+  for (const r of gw.requests) {
+    assert.equal(r.apiKey, "secret-key");
+    assert.equal(r.authorization, "Token secret-token");
+  }
+});
+
 test("an MCP tool's own cluster argument reaches the server", async (t) => {
   const gw = await mcpServers(t, z.strictObject({ cluster: z.string() }));
   const { tools, close } = await connectMcpServers([server("grafana", gw.url)], fetch);

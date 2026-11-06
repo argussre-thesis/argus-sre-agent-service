@@ -7,7 +7,7 @@ import pkg from "../../package.json" with { type: "json" };
 import { log } from "../log.ts";
 import { publicFetch } from "./publicFetch.ts";
 
-export type McpServer = { name: string; url: string; token: string };
+export type McpServer = { name: string; url: string } & ({ token: string } | { headers: Record<string, string> });
 
 const TIMEOUT_MS = 30_000;
 const MAX_RESULT_CHARS = 20_000;
@@ -29,11 +29,11 @@ export function reason(err: unknown): string {
 
 const resultText = (result: CallToolResult) => capped(result.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("\n"));
 
-async function openClient(url: URL, token: string, fetchFn?: FetchLike): Promise<Client> {
+async function openClient(url: URL, headers: Record<string, string>, fetchFn?: FetchLike): Promise<Client> {
   const client = new Client({ name: "argus-agent-service", version: pkg.version });
   const transport = new StreamableHTTPClientTransport(url, {
     fetch: fetchFn,
-    requestInit: { headers: { authorization: `Bearer ${token}` } },
+    requestInit: { headers },
   });
   try {
     await client.connect(transport, { timeout: TIMEOUT_MS });
@@ -46,7 +46,7 @@ async function openClient(url: URL, token: string, fetchFn?: FetchLike): Promise
 
 function open(gatewayUrl: string, token: string, tenantId: string, cluster: string): Promise<Client> {
   const path = `/mcp/tenants/${encodeURIComponent(tenantId)}/clusters/${encodeURIComponent(cluster)}`;
-  return openClient(new URL(path, gatewayUrl), token);
+  return openClient(new URL(path, gatewayUrl), { authorization: `Bearer ${token}` });
 }
 
 export async function connectGateway(gatewayUrl: string, token: string, tenantId: string, clusters: string[]) {
@@ -108,8 +108,10 @@ export async function connectGateway(gatewayUrl: string, token: string, tenantId
   return { tools, close };
 }
 
-async function connectMcpServer({ name: server, url, token }: McpServer, fetchFn: FetchLike) {
-  const client = await openClient(new URL(url), token, fetchFn);
+async function connectMcpServer(mcpServer: McpServer, fetchFn: FetchLike) {
+  const { name: server, url } = mcpServer;
+  const headers = "headers" in mcpServer ? mcpServer.headers : { authorization: `Bearer ${mcpServer.token}` };
+  const client = await openClient(new URL(url), headers, fetchFn);
   try {
     const { tools: listed, nextCursor } = await client.listTools(undefined, { timeout: TIMEOUT_MS });
     const seen = new Set<string>();

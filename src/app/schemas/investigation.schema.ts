@@ -16,13 +16,17 @@ export const incidentSchema = z.strictObject({
   alerts: z.array(alertSchema).min(1),
 });
 
+const mcpServerFields = {
+  name: z.string().regex(/^[a-z0-9-]{1,20}$/),
+  url: z.string().min(1),
+};
+
 export const mcpServersSchema = z
   .array(
-    z.strictObject({
-      name: z.string().regex(/^[a-z0-9-]{1,20}$/),
-      url: z.string().min(1),
-      token: z.string().min(1),
-    }),
+    z.union([
+      z.strictObject({ ...mcpServerFields, token: z.string().min(1) }),
+      z.strictObject({ ...mcpServerFields, headers: z.record(z.string().min(1), z.string().min(1)) }),
+    ]), // one of the 2
   )
   .default([]);
 

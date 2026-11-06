@@ -121,6 +121,8 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
     [{ ...start, mcpServers: [{ name: "Bad_Name", url: "https://mcp.example.com/", token: "x" }] }, "VALIDATION_ERROR", /"mcpServers"/],
     [{ ...start, mcpServers: [{ name: "grafana", url: "https://mcp.example.com/" }] }, "VALIDATION_ERROR", /"mcpServers"/],
     [{ ...start, mcpServers: [{ name: "grafana", url: "", token: "x" }] }, "VALIDATION_ERROR", /"mcpServers"/],
+    [{ ...start, mcpServers: [{ name: "grafana", url: "https://mcp.example.com/", token: "x", headers: { "api-key": "y" } }] }, "VALIDATION_ERROR", /"mcpServers"/],
+    [{ ...start, mcpServers: [{ name: "grafana", url: "https://mcp.example.com/", headers: { "api-key": "" } }] }, "VALIDATION_ERROR", /"mcpServers"/],
     ['{"incidentId":', "INVALID_REQUEST_BODY", /JSON/],
   ];
   for (const [body, code, reason] of cases) {
@@ -140,6 +142,18 @@ test("MCP server tokens are not echoed in a 400, and a run accepted with them do
   const rejected = await api.post({ ...start, incidentId: randomUUID(), mcpServers: [{ ...mcpServer, name: "Bad_Name" }] });
   assert.equal(rejected.status, 400);
   assert.doesNotMatch(await rejected.text(), /server-token/);
+
+  const headersServer = { name: "Bad_Name", url: mcpServer.url, headers: { "api-key": "server-header-value" } };
+  const rejectedHeaders = await api.post({ ...start, incidentId: randomUUID(), mcpServers: [headersServer] });
+  assert.equal(rejectedHeaders.status, 400);
+  assert.doesNotMatch(await rejectedHeaders.text(), /server-header-value/);
+
+  const accepted = await api.post({ ...start, incidentId: randomUUID(), mcpServers: [{ ...headersServer, name: "newrelic" }] });
+  assert.equal(accepted.status, 202);
+  const acceptedId = (await accepted.json()).data.id;
+  await api.finished(acceptedId);
+  const acceptedRow = await prisma.investigation.findUniqueOrThrow({ where: { id: acceptedId }, include: { messages: true } });
+  assert.doesNotMatch(JSON.stringify(acceptedRow), /server-header-value/);
 
   const res = await api.post({ ...start, incidentId: randomUUID(), mcpServers: [mcpServer] });
   assert.equal(res.status, 202);
