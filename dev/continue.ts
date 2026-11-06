@@ -4,7 +4,7 @@
 import { ChatAnthropic } from "@langchain/anthropic";
 import { mapStoredMessagesToChatMessages, type StoredMessage } from "@langchain/core/messages";
 import { AIMessage, HumanMessage, ToolMessage } from "langchain";
-import { runWithGateway } from "../src/agent/agent.ts";
+import { runWithGateway } from "../src/agent/sreAgent.ts";
 import { chatModel } from "../src/agent/chatModel.ts";
 import { prisma } from "../src/app/lib/prisma.ts";
 import { loadConfig } from "../src/config.ts";
@@ -35,8 +35,8 @@ console.log(`${inv.id} (${inv.status}): ${history.length} stored messages, ${thi
 
 try {
   const messages = [...history, new HumanMessage(question)];
-  const context = { tenantId: inv.tenantId, cluster: inv.cluster };
-  const answer = await runWithGateway(model, systemPrompt, config.maxModelCalls, config.gatewayUrl, config.agentGatewayToken, messages, context, async (added) => {
+  // shortcut: only the investigation's own cluster (the list isn't stored); pass more names if a continuation needs them.
+  const answer = await runWithGateway(model, systemPrompt, config.maxModelCalls, config.gatewayUrl, config.agentGatewayToken, messages, inv.tenantId, [inv.cluster], [], async (added) => {
     for (const m of added) {
       if (ToolMessage.isInstance(m)) console.log(`  -> ${m.name}: ${m.status === "error" ? m.text : `${m.text.length} chars`}`);
       const u = AIMessage.isInstance(m) ? m.usage_metadata : undefined;

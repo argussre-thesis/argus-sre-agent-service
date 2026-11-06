@@ -1,7 +1,7 @@
 // One real investigation from the command line, before the HTTP API (step 5): each step as it happens, then the report.
 // Needs the gateway (`npm run dev` in argus-sre-gateway/) and the runner in minikube. Costs tokens.
 import { AIMessage, HumanMessage, ToolMessage } from "langchain";
-import { runWithGateway } from "../src/agent/agent.ts";
+import { runWithGateway } from "../src/agent/sreAgent.ts";
 import { loadConfig } from "../src/config.ts";
 import { chatModel } from "../src/agent/chatModel.ts";
 import { incidentMessage, INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
@@ -33,7 +33,9 @@ const report = await runWithGateway(
   config.gatewayUrl,
   config.agentGatewayToken,
   [incidentMessage({ cluster: "minikube", title: alert.annotations.summary, alerts: [alert] })],
-  { tenantId, cluster: "minikube" },
+  tenantId,
+  ["minikube"],
+  [],
   async (added) => {
     for (const m of added) {
       if (ToolMessage.isInstance(m)) console.log(`  -> ${m.name}: ${m.status === "error" ? m.text : `${m.text.length} chars`}`);

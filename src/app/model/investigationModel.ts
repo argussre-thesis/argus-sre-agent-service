@@ -1,6 +1,7 @@
 import { mapChatMessagesToStoredMessages } from "@langchain/core/messages";
 import { AIMessage, type BaseMessage } from "langchain";
-import { runWithGateway } from "../../agent/agent.ts";
+import { runWithGateway } from "../../agent/sreAgent.ts";
+import { reason } from "../../agent/mcp.ts";
 import { incidentMessage } from "../../agent/prompts.ts";
 import { log } from "../../log.ts";
 import type { AppDeps } from "../app.ts";
@@ -63,15 +64,36 @@ export const getInvestigationMessagesService = async (tenantId: string, id: stri
   return ok(investigation);
 };
 
+const reportInvestigationEnded = async (
+  backendUrl: string,
+  backendAgentServiceToken: string,
+  tenantId: string,
+  incidentId: string,
+  investigationId: string,
+  status: string,
+  report: string | null,
+  error: string | null,
+) => {
+  const res = await fetch(new URL("/internal/v1/investigations/ended", backendUrl), {
+    method: "POST",
+    headers: { authorization: `Bearer ${backendAgentServiceToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ tenantId, incidentId, investigationId, status, report, error }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`the backend answered ${res.status}: ${await res.text()}`);
+  const { data } = (await res.json()) as { data: { posted: boolean } };
+  return data.posted;
+};
+
 // Saves the investigation with its incident, then runs it in the background: each step's messages are saved as they come.
 export const startInvestigationService = async (
-  { chatModel, model, effort, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken }: AppDeps,
+  { chatModel, model, effort, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, backendUrl, backendAgentServiceToken }: AppDeps,
   tenantId: string,
-  { incidentId, cluster, title, alerts }: StartInvestigationBody,
+  { incidentId, cluster, title, alerts, mcpServers }: StartInvestigationBody,
 ) => {
   const messages = [incidentMessage({ cluster, title, alerts })];
   const created = await prisma.$transaction(async (tx) => {
-    // Held until the transaction ends, so two starts for one incident can't both pass the check.
+    // lock until investigation creation is done.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}), hashtext(${incidentId}))`;
     const running = await tx.investigation.findFirst({ where: { tenantId, incidentId, status: "running" }, select: { id: true } });
     if (running) return fail(409, "INVESTIGATION_RUNNING", "This incident already has a running investigation", running);
@@ -87,11 +109,13 @@ export const startInvestigationService = async (
   log("info", "investigation started", { id, tenantId, cluster, incidentId });
 
   let seq = messages.length;
-  // Nothing awaits this promise, so it must never reject: Node 24 exits on an unhandled rejection.
-  runWithGateway(chatModel, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, { tenantId, cluster }, async (added) => {
+  // Do not await, invetigation is running in background
+  runWithGateway(chatModel, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, tenantId, [cluster], mcpServers,
+    async (added) => {
     await prisma.message.createMany({ data: messageRows(added, seq, model).map((row) => ({ ...row, investigationId: id })) });
     seq += added.length;
-  })
+    }
+  )
     .then(
       (report) => ({ status: "done" as const, report }),
       (err: Error) => {
@@ -100,14 +124,19 @@ export const startInvestigationService = async (
       },
     )
     .then((end) => prisma.investigation.update({ where: { id }, data: { ...end, finishedAt: new Date() } }))
-    .then(({ status }) => log("info", "investigation finished", { id, status, steps: seq - 1 }))
+    .then(({ status, report, error }) => {
+      log("info", "investigation finished", { id, status, steps: seq - 1 });
+      // A failed call only logged
+      reportInvestigationEnded(backendUrl, backendAgentServiceToken, tenantId, incidentId, id, status, report, error)
+        .then((posted) => log("info", "backend told the investigation ended", { id, posted }))
+        .catch((err: Error) => log("error", "cannot tell the backend the investigation ended", { id, error: reason(err) }));
+    })
     // The row then stays `running` until the next startup marks it failed.
     .catch((err: Error) => log("error", "cannot save the investigation's end", { id, error: err.stack ?? String(err) }));
   return ok({ id });
 };
 
-// At startup, before any run starts: a run still `running` lived in a process that is gone.
-// shortcut: assumes one instance (it would fail another's live runs); runs need an owner before we scale.
+// At startup, marks investigations that were running when service stopped as failed.
 export const failInterruptedInvestigationsService = async () => {
   const { count } = await prisma.investigation.updateMany({
     where: { status: "running" },

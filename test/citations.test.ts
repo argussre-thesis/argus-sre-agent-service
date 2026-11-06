@@ -32,6 +32,31 @@ test("every Evidence item must cite a tool call that ran", () => {
   }
 });
 
+test("MCP tools: names with digits, hyphens or capitals, and backticks in the arguments", () => {
+  const loki = { query: '{app="x"} |~ `err` != `{y}`' };
+  const mcpCalls = [
+    new AIMessage({
+      content: "",
+      tool_calls: [
+        { name: "prod-grafana2_Query_loki", args: loki, id: "1" },
+        { name: "list_pods", args: { namespace: "demo" }, id: "2" },
+      ],
+    }),
+  ];
+  const lokiCall = `\`prod-grafana2_Query_loki ${JSON.stringify(loki)}\``;
+  const wrong = `\`prod-grafana2_Query_loki ${JSON.stringify({ query: "`other`" })}\``;
+  const cases: [name: string, evidence: string, problems: string[]][] = [
+    ["cited as sent", `- x ${lokiCall}`, []],
+    ["two citations in one item", `- x ${lokiCall} and \`list_pods {"namespace":"demo"}\``, []],
+    ["arguments that were never used", `- x ${wrong}`, [`${wrong} matches no tool call you made`]],
+    ["not JSON, then a good one", `- x \`list_pods {nope}\` and ${lokiCall}`, ["`list_pods {nope}` matches no tool call you made"]],
+    ["never closed", '- x `list_pods {"namespace":"demo"', ['no tool call cited in: "x `list_pods {"namespace":"demo""']],
+  ];
+  for (const [name, evidence, problems] of cases) {
+    assert.deepEqual(citationProblems(report(evidence), mcpCalls), problems, name);
+  }
+});
+
 test("a report without an Evidence section", () => {
   assert.deepEqual(citationProblems(`## Summary\nx ${call}`, transcript), ["the report has no ## Evidence section"]);
 });

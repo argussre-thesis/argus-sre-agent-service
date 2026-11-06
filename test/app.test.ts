@@ -9,11 +9,31 @@ import { mapStoredMessagesToChatMessages, type StoredMessage } from "@langchain/
 import { AIMessage, fakeModel } from "langchain";
 import { createApp } from "../src/app/app.ts";
 import { prisma } from "../src/app/lib/prisma.ts";
-import { INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
+import { CONVERSATION_PROMPT, INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
 import { fakeMcpGateway } from "./helpers.ts";
 
 const gw = await fakeMcpGateway();
 after(() => gw.close());
+
+// Fake backend: records every "run ended" call and answers as the backend does.
+const ended: { method?: string; url?: string; authorization?: string; contentType?: string; body: Record<string, unknown> }[] = [];
+const backend = createServer(async (req, res) => {
+  let raw = "";
+  for await (const chunk of req) raw += chunk;
+  ended.push({ method: req.method, url: req.url, authorization: req.headers.authorization, contentType: req.headers["content-type"], body: JSON.parse(raw) });
+  res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ success: true, data: { posted: true } }));
+}).listen(0, "127.0.0.1");
+await once(backend, "listening");
+after(() => new Promise((resolve) => backend.close(resolve)));
+// The call goes out after the run's end is saved, so it can arrive after `finished` returns.
+async function endedCall(investigationId: string) {
+  for (let i = 0; i < 200; i++) {
+    const call = ended.find((c) => c.body.investigationId === investigationId);
+    if (call) return call;
+    await sleep(10);
+  }
+  throw new Error(`the backend was never told investigation ${investigationId} ended`);
+}
 
 // shortcut: no test database, these tests use DATABASE_URL's (.env) and delete only what they started; a test database for CI.
 const started: string[] = [];
@@ -44,9 +64,11 @@ async function serve(model: ReturnType<typeof fakeModel>, gatewayUrl = gw.url) {
     model: "fake:model",
     effort: "low",
     systemPrompt: INVESTIGATION_PROMPT,
+    conversationPrompt: CONVERSATION_PROMPT,
     maxModelCalls: 30,
     gatewayUrl,
     agentGatewayToken: "a".repeat(32),
+    backendUrl: `http://127.0.0.1:${(backend.address() as AddressInfo).port}`,
     backendAgentServiceToken: token,
   }).listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -95,6 +117,10 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
     [{ ...start, alerts: [{ ...alert, annotations: undefined }] }, "VALIDATION_ERROR", /"alerts"/],
     [{ ...start, alerts: [{ ...alert, fingerprint: "abc" }] }, "VALIDATION_ERROR", /"alerts"/],
     [{ ...start, tenantId: "t_2" }, "VALIDATION_ERROR", /Unrecognized key: \\"tenantId\\"/],
+    [{ ...start, mcpServers: "grafana" }, "VALIDATION_ERROR", /"mcpServers"/],
+    [{ ...start, mcpServers: [{ name: "Bad_Name", url: "https://mcp.example.com/", token: "x" }] }, "VALIDATION_ERROR", /"mcpServers"/],
+    [{ ...start, mcpServers: [{ name: "grafana", url: "https://mcp.example.com/" }] }, "VALIDATION_ERROR", /"mcpServers"/],
+    [{ ...start, mcpServers: [{ name: "grafana", url: "", token: "x" }] }, "VALIDATION_ERROR", /"mcpServers"/],
     ['{"incidentId":', "INVALID_REQUEST_BODY", /JSON/],
   ];
   for (const [body, code, reason] of cases) {
@@ -105,6 +131,26 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
     assert.match(JSON.stringify(error), reason);
   }
   assert.equal(model.callCount, 0);
+});
+
+test("MCP server tokens are not echoed in a 400, and a run accepted with them doesn't store them", async () => {
+  const api = await serve(fakeModel().respond(reportReply()));
+  const mcpServer = { name: "prod-grafana", url: "https://127.0.0.1/", token: "server-token" };
+
+  const rejected = await api.post({ ...start, incidentId: randomUUID(), mcpServers: [{ ...mcpServer, name: "Bad_Name" }] });
+  assert.equal(rejected.status, 400);
+  assert.doesNotMatch(await rejected.text(), /server-token/);
+
+  const res = await api.post({ ...start, incidentId: randomUUID(), mcpServers: [mcpServer] });
+  assert.equal(res.status, 202);
+  const { id } = (await res.json()).data;
+  await api.finished(id);
+  const row = await prisma.investigation.findUniqueOrThrow({ where: { id }, include: { messages: true } });
+  assert.doesNotMatch(JSON.stringify(row), /server-token/);
+  // The note about the blocked server is saved after the alert, in order.
+  const stored = row.messages.toSorted((a, b) => a.seq - b.seq).map((m) => JSON.stringify(m.data));
+  assert.match(stored[0]!, /Pod is crash looping/);
+  assert.match(stored[1]!, /prod-grafana: .*127\.0\.0\.1 is not a public address/);
 });
 
 test("a start answers 202 at once, the run goes on in the background, and the report and transcript are read", async () => {
@@ -153,6 +199,14 @@ test("a start answers 202 at once, the run goes on in the background, and the re
   const done = await api.finished(id);
   assert.deepEqual(done, { ...running, status: "done", report, finishedAt: done.finishedAt });
   assert.ok(done.startedAt <= done.finishedAt);
+  // The backend is told, with the agent service's token, so it can post the report.
+  assert.deepEqual(await endedCall(id), {
+    method: "POST",
+    url: "/internal/v1/investigations/ended",
+    authorization: `Bearer ${token}`,
+    contentType: "application/json",
+    body: { tenantId: tenant, incidentId: "inc_1", investigationId: id, status: "done", report, error: null },
+  });
   assert.equal(gw.requests.at(-1)?.url, `/mcp/tenants/${tenant}/clusters/prod-eu`);
   assert.match(
     model.calls[0]!.messages[1]!.text,
@@ -195,6 +249,14 @@ test("a run that fails is failed with its error, and the service keeps serving",
   assert.equal(failed.error, "run ended without a report (stop reason: max_tokens)");
   assert.equal(failed.report, null);
   assert.ok(failed.finishedAt);
+  assert.deepEqual((await endedCall(id)).body, {
+    tenantId: tenant,
+    incidentId: "inc_failed",
+    investigationId: id,
+    status: "failed",
+    report: null,
+    error: "run ended without a report (stop reason: max_tokens)",
+  });
   assert.equal((await api.get(`/${id}`)).status, 200);
 });
 

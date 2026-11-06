@@ -1,86 +1,28 @@
-import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import type { StructuredTool } from "@langchain/core/tools";
-import {
-  AIMessage,
-  anthropicPromptCachingMiddleware,
-  type BaseMessage,
-  createAgent,
-  createMiddleware,
-  HumanMessage,
-  modelCallLimitMiddleware,
-  toolErrorMiddleware,
-  ToolInvocationError,
-} from "langchain";
-import { citationProblems } from "./citations.ts";
+import { AIMessage, type BaseMessage } from "langchain";
 import { log } from "../log.ts";
-import { connectGateway, type OpsContext } from "./mcp.ts";
 
-export function createSreAgent(model: BaseChatModel, systemPrompt: string, tools: StructuredTool[], maxModelCalls: number) {
-  return createAgent({
-    model,
-    systemPrompt,
-    tools,
-    middleware: [
-      // LangChain's text for bad args carries a JS stack trace with our file paths; the model needs only the schema check's message.
-      toolErrorMiddleware({
-        onError: (err) => (ToolInvocationError.isInstance(err) ? `Error BAD_ARGS: ${err.toolError.message}` : undefined),
-      }),
-      // Before the call limit: after-model hooks run last to first, and a jump skips the rest, so the limit counts the call first.
-      citationCheck,
-      // "error": at the limit the run fails, instead of ending without a report and looking finished.
-      modelCallLimitMiddleware({ runLimit: maxModelCalls, exitBehavior: "error" }),
-      // "ignore": other providers are skipped without a warning (OpenAI caches by itself).
-      anthropicPromptCachingMiddleware({ unsupportedModelBehavior: "ignore" }),
-    ],
-    // LangGraph stops after 25 graph steps, and each model call is several (middleware, model, tools): let the call limit decide.
-  }).withConfig({ recursionLimit: 10 * maxModelCalls });
-}
+type StreamingAgent = {
+  stream(input: { messages: BaseMessage[] }, options: { streamMode: "values" }): Promise<AsyncIterable<{ messages: BaseMessage[] }>>;
+};
 
-export type SreAgent = ReturnType<typeof createSreAgent>;
-
-// A normal end: Anthropic's stop_reason, OpenAI's finish_reason (Chat Completions) or status (Responses API).
 const FINISHED = ["end_turn", "stop", "completed"];
-
 function stopReason(m: AIMessage): string | undefined {
   const meta = m.response_metadata as { stop_reason?: string; finish_reason?: string; status?: string };
   return meta.stop_reason ?? meta.finish_reason ?? meta.status;
 }
 
-function finished(m: AIMessage): boolean {
+export function finished(m: AIMessage): boolean {
   const reason = stopReason(m);
   return reason === undefined || FINISHED.includes(reason);
 }
 
-const FIX_REQUEST = "Your report's citations don't match your tool calls:";
-
-// One chance to fix the report's citations, inside the run. The fix's call is counted, but a jump goes straight to
-// the model, past the limit's check: at most one call over the limit.
-const citationCheck = createMiddleware({
-  name: "CitationCheck",
-  afterModel: {
-    canJumpTo: ["model"],
-    hook: (state) => {
-      const last = state.messages.at(-1);
-      if (!AIMessage.isInstance(last) || last.tool_calls?.length || !finished(last)) return;
-      const problems = citationProblems(last.text, state.messages);
-      if (problems.length === 0) return;
-      if (state.messages.some((m) => HumanMessage.isInstance(m) && m.text.startsWith(FIX_REQUEST))) {
-        throw new Error(`the report's citations still don't match its tool calls: ${problems.join("; ")}`);
-      }
-      log("warn", "report citations don't match, asking for a fix", { problems });
-      const list = problems.map((p) => `- ${p}`).join("\n");
-      const fix = `${FIX_REQUEST}\n${list}\nWrite the whole report again, ending each Evidence bullet with a tool call you made: its name and its arguments as JSON, in backticks. Make the call first if you need the evidence.`;
-      return { messages: [new HumanMessage(fix)], jumpTo: "model" };
-    },
-  },
-});
-
-// Runs the agent until it answers and returns the report. `onStep` gets each step's new messages, in order.
+// Runs the agent until it answers and returns the answer. `onStep` gets each step's new messages, in order.
 // Throws when the run ends any other way: call limit, max_tokens, refusal, API error.
 export async function runAgent(
-  agent: SreAgent,
+  agent: StreamingAgent,
   messages: BaseMessage[],
-  context: OpsContext,
+  tenantId: string,
+  clusters: string[],
   onStep: (added: BaseMessage[]) => Promise<void>,
 ): Promise<string> {
   let all = messages;
@@ -88,7 +30,7 @@ export async function runAgent(
     if (state.messages.length === all.length) continue;
     const added = state.messages.slice(all.length);
     all = state.messages;
-    for (const m of added) if (AIMessage.isInstance(m)) logStep(m, context);
+    for (const m of added) if (AIMessage.isInstance(m)) logStep(m, tenantId, clusters);
     await onStep(added);
   }
   const last = all.at(-1);
@@ -98,28 +40,11 @@ export async function runAgent(
   return last.text;
 }
 
-export async function runWithGateway(
-  model: BaseChatModel,
-  systemPrompt: string,
-  maxModelCalls: number,
-  gatewayUrl: string,
-  agentGatewayToken: string,
-  messages: BaseMessage[],
-  context: OpsContext,
-  onStep: (added: BaseMessage[]) => Promise<void>,
-): Promise<string> {
-  const gateway = await connectGateway(gatewayUrl, agentGatewayToken, context);
-  try {
-    return await runAgent(createSreAgent(model, systemPrompt, gateway.tools, maxModelCalls), messages, context, onStep);
-  } finally {
-    await gateway.close();
-  }
-}
-
-function logStep(m: AIMessage, context: OpsContext): void {
+function logStep(m: AIMessage, tenantId: string, clusters: string[]): void {
   const u = m.usage_metadata;
   log("info", "model step", {
-    ...context,
+    tenantId,
+    clusters,
     stopReason: stopReason(m),
     toolCalls: m.tool_calls?.map(({ name, args }) => ({ name, args })),
     tokens: u && {
