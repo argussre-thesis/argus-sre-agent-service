@@ -23,7 +23,7 @@ function createConversationAgent(model: BaseChatModel, systemPrompt: string, too
         onError: (err) => (ToolInvocationError.isInstance(err) ? `Error BAD_ARGS: ${err.toolError.message}` : undefined),
       }),
       modelCallLimitMiddleware({ runLimit: maxModelCalls, exitBehavior: "error" }),
-      anthropicPromptCachingMiddleware({ unsupportedModelBehavior: "ignore" }),
+      anthropicPromptCachingMiddleware({ minMessagesToCache: 1, unsupportedModelBehavior: "ignore" }),
     ],
   }).withConfig({ recursionLimit: 10 * maxModelCalls });
 }
