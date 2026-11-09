@@ -9,7 +9,7 @@ import { AIMessage, fakeModel } from "langchain";
 import { createApp } from "../src/app/app.ts";
 import { prisma } from "../src/app/lib/prisma.ts";
 import { CONVERSATION_PROMPT, INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
-import { fakeMcpGateway } from "./helpers.ts";
+import { fakeMcpGateway, unused } from "./helpers.ts";
 
 const gw = await fakeMcpGateway();
 after(() => gw.close());
@@ -64,9 +64,7 @@ const toolCall = () => new AIMessage({ content: "", tool_calls: [{ name: "list_p
 
 async function serve(model: ReturnType<typeof fakeModel>, backendAt = backendUrl) {
   const server = createApp({
-    chatModel: model,
-    model: "fake:model",
-    effort: "low",
+    models: { low: { chatModel: model, model: "fake:model", effort: "low" }, medium: unused("medium"), high: unused("high") },
     systemPrompt: INVESTIGATION_PROMPT,
     conversationPrompt: CONVERSATION_PROMPT,
     maxModelCalls: 30,
@@ -86,7 +84,6 @@ async function serve(model: ReturnType<typeof fakeModel>, backendAt = backendUrl
     });
   return {
     send,
-    // Sends a message and waits for its reply to reach the backend. Returns the one message the model got.
     async turn(body: { externalId: string; text: string; incident?: ReturnType<typeof incident>; mcpServers?: (typeof mcpServer)[] }) {
       const before = callsFor(body.externalId).length;
       const calls = model.callCount;

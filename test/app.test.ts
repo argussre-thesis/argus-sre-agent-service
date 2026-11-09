@@ -10,7 +10,7 @@ import { AIMessage, fakeModel } from "langchain";
 import { createApp } from "../src/app/app.ts";
 import { prisma } from "../src/app/lib/prisma.ts";
 import { CONVERSATION_PROMPT, INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
-import { fakeMcpGateway } from "./helpers.ts";
+import { fakeMcpGateway, unused } from "./helpers.ts";
 
 const gw = await fakeMcpGateway();
 after(() => gw.close());
@@ -60,9 +60,7 @@ const toolCallReply = () =>
 
 async function serve(model: ReturnType<typeof fakeModel>, gatewayUrl = gw.url) {
   const server = createApp({
-    chatModel: model,
-    model: "fake:model",
-    effort: "low",
+    models: { low: { chatModel: model, model: "fake:model", effort: "low" }, medium: unused("medium"), high: unused("high") },
     systemPrompt: INVESTIGATION_PROMPT,
     conversationPrompt: CONVERSATION_PROMPT,
     maxModelCalls: 30,
@@ -110,7 +108,6 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
     [{ ...start, alerts: [] }, "VALIDATION_ERROR", /"alerts"/],
     [{ ...start, alerts: "down" }, "VALIDATION_ERROR", /"alerts"/],
     [{ ...start, alerts: [[]] }, "VALIDATION_ERROR", /"alerts"/],
-    // An alert has the backend's fields and values.
     [{ ...start, alerts: [{ ...alert, status: "firing" }] }, "VALIDATION_ERROR", /"alerts"/],
     [{ ...start, alerts: [{ ...alert, startsAt: "yesterday" }] }, "VALIDATION_ERROR", /"alerts"/],
     [{ ...start, alerts: [{ ...alert, labels: { severity: 1 } }] }, "VALIDATION_ERROR", /"alerts"/],
@@ -123,6 +120,7 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
     [{ ...start, mcpServers: [{ name: "grafana", url: "", token: "x" }] }, "VALIDATION_ERROR", /"mcpServers"/],
     [{ ...start, mcpServers: [{ name: "grafana", url: "https://mcp.example.com/", token: "x", headers: { "api-key": "y" } }] }, "VALIDATION_ERROR", /"mcpServers"/],
     [{ ...start, mcpServers: [{ name: "grafana", url: "https://mcp.example.com/", headers: { "api-key": "" } }] }, "VALIDATION_ERROR", /"mcpServers"/],
+    [{ ...start, level: "max" }, "VALIDATION_ERROR", /"level"/],
     ['{"incidentId":', "INVALID_REQUEST_BODY", /JSON/],
   ];
   for (const [body, code, reason] of cases) {
@@ -161,10 +159,21 @@ test("MCP server tokens are not echoed in a 400, and a run accepted with them do
   await api.finished(id);
   const row = await prisma.investigation.findUniqueOrThrow({ where: { id }, include: { messages: true } });
   assert.doesNotMatch(JSON.stringify(row), /server-token/);
-  // The note about the blocked server is saved after the alert, in order.
   const stored = row.messages.toSorted((a, b) => a.seq - b.seq).map((m) => JSON.stringify(m.data));
   assert.match(stored[0]!, /Pod is crash looping/);
   assert.match(stored[1]!, /prod-grafana: .*127\.0\.0\.1 is not a public address/);
+});
+
+test("the request's level picks the model and effort the run is stored with; none is low", async () => {
+  const api = await serve(fakeModel().respond(reportReply()));
+  const high = await (await api.post({ ...start, incidentId: randomUUID(), level: "high" })).json();
+  assert.deepEqual(await prisma.investigation.findUniqueOrThrow({ where: { id: high.data.id }, select: { model: true, effort: true } }), {
+    model: "fake:high",
+    effort: "high",
+  });
+  await api.finished(high.data.id);
+  const low = await (await api.post({ ...start, incidentId: randomUUID() })).json();
+  assert.equal((await api.finished(low.data.id)).model, "fake:model");
 });
 
 test("a start answers 202 at once, the run goes on in the background, and the report and transcript are read", async () => {
@@ -213,7 +222,6 @@ test("a start answers 202 at once, the run goes on in the background, and the re
   const done = await api.finished(id);
   assert.deepEqual(done, { ...running, status: "done", report, finishedAt: done.finishedAt });
   assert.ok(done.startedAt <= done.finishedAt);
-  // The backend is told, with the agent service's token, so it can post the report.
   assert.deepEqual(await endedCall(id), {
     method: "POST",
     url: "/internal/v1/investigations/ended",
@@ -226,7 +234,6 @@ test("a start answers 202 at once, the run goes on in the background, and the re
     model.calls[0]!.messages[1]!.text,
     /^Current time: \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\nIncident in cluster "prod-eu", titled "Pod is crash looping.": 1 alert\(s\), 1 firing, 0 resolved\.\n.*\nKubePodCrashLooping: 1 firing/s,
   );
-  // Stored with the prompt it ran with, and every message in order, loadable as LangChain messages again.
   const row = await prisma.investigation.findUniqueOrThrow({ where: { id }, include: { messages: { orderBy: { seq: "asc" } } } });
   assert.equal(row.systemPrompt, INVESTIGATION_PROMPT);
   const messages = mapStoredMessagesToChatMessages(row.messages.map((m) => m.data as unknown as StoredMessage));
@@ -237,15 +244,14 @@ test("a start answers 202 at once, the run goes on in the background, and the re
   assert.equal(messages.at(-1)!.text, report);
   // Tokens on the AI messages only, in four parts that don't overlap.
   assert.deepEqual(
-    row.messages.map((m) => [m.model, m.uncachedInputTokens, m.cacheWriteTokens, m.cacheReadTokens, m.outputTokens]),
+    row.messages.map((m) => [m.model, m.effort, m.uncachedInputTokens, m.cacheWriteTokens, m.cacheReadTokens, m.outputTokens]),
     [
-      [null, null, null, null, null],
-      ["fake:model", 1561, 0, 0, 100],
-      [null, null, null, null, null],
-      ["fake:model", 4, 1489, 3588, 2011],
+      [null, null, null, null, null, null],
+      ["fake:model", "low", 1561, 0, 0, 100],
+      [null, null, null, null, null, null],
+      ["fake:model", "low", 4, 1489, 3588, 2011],
     ],
   );
-  // The transcript endpoint serves the stored messages as they are.
   const transcript = await (await api.get(`/${id}/messages`)).json();
   assert.deepEqual(
     transcript.data.messages.map((m: { seq: number; data: unknown }) => [m.seq, m.data]),
@@ -333,7 +339,6 @@ test("an incident's investigations are listed newest first, and every read is sc
   assert.equal(missing.status, 400);
   assert.equal((await missing.json()).error.code, "QUERY_VALIDATION_ERROR");
 
-  // Another tenant sees none of it.
   const other = `t_${randomUUID()}`;
   assert.deepEqual((await (await api.get("?incidentId=inc_list", other)).json()).data, { investigations: [] });
   for (const path of [`/${ids[0]}`, `/${ids[0]}/messages`]) {

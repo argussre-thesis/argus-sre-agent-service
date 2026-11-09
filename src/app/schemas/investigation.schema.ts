@@ -1,6 +1,6 @@
 import * as z from "zod";
+import { LEVELS } from "../../config.ts";
 
-// An alert's fields as the backend stores them.
 const alertSchema = z.strictObject({
   status: z.enum(["FIRING", "RESOLVED"]),
   startsAt: z.iso.datetime({ offset: true }),
@@ -26,11 +26,13 @@ export const mcpServersSchema = z
     z.union([
       z.strictObject({ ...mcpServerFields, token: z.string().min(1) }),
       z.strictObject({ ...mcpServerFields, headers: z.record(z.string().min(1), z.string().min(1)) }),
-    ]), // one of the 2
+    ]),
   )
   .default([]);
 
-export const startInvestigationSchema = incidentSchema.extend({ mcpServers: mcpServersSchema });
+export const levelSchema = z.enum(LEVELS).default("low");
+
+export const startInvestigationSchema = incidentSchema.extend({ mcpServers: mcpServersSchema, level: levelSchema });
 export type StartInvestigationBody = z.infer<typeof startInvestigationSchema>;
 
 export const listInvestigationsQuerySchema = z.object({

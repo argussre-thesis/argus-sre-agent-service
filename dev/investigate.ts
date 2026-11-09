@@ -2,11 +2,10 @@
 // Needs the gateway (`npm run dev` in argus-sre-gateway/) and the runner in minikube. Costs tokens.
 import { AIMessage, HumanMessage, ToolMessage } from "langchain";
 import { runWithGateway } from "../src/agent/sreAgent.ts";
-import { loadConfig } from "../src/config.ts";
+import { LEVELS, loadConfig, type Level } from "../src/config.ts";
 import { chatModel } from "../src/agent/chatModel.ts";
 import { incidentMessage, INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
 
-// Shaped like an Alertmanager webhook alert from kube-prometheus' KubePodCrashLooping rule.
 const alert = {
   status: "FIRING" as const,
   labels: { alertname: "KubePodCrashLooping", severity: "warning", namespace: "demo", pod: "crashloop-68784d8c77-sbnvd", container: "app" },
@@ -21,8 +20,10 @@ const config = loadConfig();
 // The gateway answers any tenant but the runner token's org with RUNNER_OFFLINE.
 const tenantId = process.env.DEV_TENANT_ID;
 if (!tenantId) throw new Error("set DEV_TENANT_ID in .env: the org id (org_…) of the minikube runner's token");
-const { name, model } = chatModel(config.model);
-console.log(`${name}${"effort" in config.model ? `, effort ${config.model.effort}` : ""}, at most ${config.maxModelCalls} model calls\n`);
+const level = (process.env.DEV_LEVEL || "low") as Level;
+if (!LEVELS.includes(level)) throw new Error(`DEV_LEVEL must be one of ${LEVELS.join(", ")}`);
+const { name, model, effort } = chatModel(config.models[level]);
+console.log(`${level}: ${name}${effort ? `, effort ${effort}` : ""}, at most ${config.maxModelCalls} model calls\n`);
 
 const totals = { calls: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
 const started = Date.now();

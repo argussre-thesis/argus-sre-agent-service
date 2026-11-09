@@ -3,7 +3,11 @@ import type { AddressInfo } from "node:net";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { fakeModel } from "langchain";
 import * as z from "zod";
+
+// A level a test doesn't ask for: its model has no replies, so using it fails the run.
+export const unused = (level: string) => ({ chatModel: fakeModel(), model: `fake:${level}`, effort: level });
 
 // Fake gateway MCP endpoint, stateless like the real one, with one tool: records every request and tool call,
 // and answers each call with what the test last set.

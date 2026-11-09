@@ -72,16 +72,15 @@ export async function connectGateway(gatewayUrl: string, token: string, tenantId
     await close();
     throw new Error(`cannot reach the gateway: ${reason(err)}`);
   }
-  // Check 
   const clash = listed.tools.find((t) => t.inputSchema.properties && "cluster" in t.inputSchema.properties);
   if (clash) {
     await close();
     throw new Error(`the gateway's ${clash.name} tool has a "cluster" argument of its own`);
   }
 
-  // by default cluster[0], tool can override it. 
+  // clusters[0] unless the model names a cluster.
   const call = async (name: string, { cluster = clusters[0], ...args }: Record<string, unknown>) => {
-    try {            //call tool    // connect to cluster
+    try {
       const result = (await (await client(cluster as string)).callTool({ name, arguments: args }, undefined, { timeout: TIMEOUT_MS })) as CallToolResult;
       return resultText(result);
     } catch (err) {

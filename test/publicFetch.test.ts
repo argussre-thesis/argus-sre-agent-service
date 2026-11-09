@@ -59,7 +59,6 @@ test("non-public IPs are refused, however they're written", () => {
   }
 });
 
-// Calls publicLookup and gives back what it answered.
 const lookup = (all: boolean) =>
   new Promise<Parameters<Parameters<LookupFunction>[2]>>((resolve) => {
     publicLookup("mcp.example.com", { all }, (...answer) => resolve(answer));

@@ -28,7 +28,6 @@ function createConversationAgent(model: BaseChatModel, systemPrompt: string, too
   }).withConfig({ recursionLimit: 10 * maxModelCalls });
 }
 
-// Nothing is kept from a turn's steps; runAgent logs their tokens.
 const keepNothing = async () => {};
 
 // One turn. With no clusters and no MCP servers the model has no tools.

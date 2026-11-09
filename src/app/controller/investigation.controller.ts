@@ -8,7 +8,6 @@ import {
 } from "../model/investigationModel.ts";
 import { errorResponse, successResponse } from "../utils/responseHandler.ts";
 
-// Takes the agent as an argument, so tests can pass one with a fake model.
 export const startInvestigation =
   (deps: AppDeps) =>
   async (req: Request, res: Response, next: NextFunction) => {

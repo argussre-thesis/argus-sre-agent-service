@@ -1,6 +1,5 @@
 import { HumanMessage } from "langchain";
 
-// An alert as the backend stores it.
 export type IncidentAlert = {
   status: "FIRING" | "RESOLVED";
   startsAt: string;
@@ -12,7 +11,6 @@ export type IncidentAlert = {
 // One alert rule firing for 40 pods is 40 near-identical alerts: past this, a group lists only a count.
 const MAX_LISTED_PER_GROUP = 10;
 
-// The keys whose value is the same in every record.
 const shared = (records: Record<string, string>[]) =>
   Object.fromEntries(Object.entries(records[0]!).filter(([k, v]) => records.every((r) => r[k] === v)));
 const own = (record: Record<string, string>, common: Record<string, string>) =>

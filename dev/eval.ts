@@ -8,6 +8,7 @@ const authorization = `Bearer ${process.env.BACKEND_AGENT_SERVICE_TOKEN}`;
 // The gateway answers any tenant but the runner token's org with RUNNER_OFFLINE.
 const tenant = process.env.DEV_TENANT_ID;
 if (!tenant) throw new Error("set DEV_TENANT_ID in .env: the org id (org_…) of the minikube runner's token");
+const level = process.env.DEV_LEVEL || "low";
 const names = process.argv.slice(2);
 const unknown = names.filter((n) => !scenarios.some((s) => s.name === n));
 if (unknown.length > 0) {
@@ -23,6 +24,7 @@ for (const s of scenarios.filter((s) => names.length === 0 || names.includes(s.n
     body: JSON.stringify({
       incidentId: `eval-${s.name}`,
       cluster: "minikube",
+      level,
       title: s.alert.annotations.summary!,
       alerts: [{ status: "FIRING", startsAt: new Date().toISOString(), ...s.alert }],
     }),
@@ -37,6 +39,6 @@ for (const s of scenarios.filter((s) => names.length === 0 || names.includes(s.n
   } while (inv.status === "running");
 
   const secs = (Date.parse(inv.finishedAt) - Date.parse(inv.startedAt)) / 1000;
-  console.log(`\n=== ${s.name}: ${inv.status} in ${secs.toFixed(1)}s (${inv.id}, ${inv.model})`);
+  console.log(`\n=== ${s.name}: ${inv.status} in ${secs.toFixed(1)}s (${inv.id}, ${level}: ${inv.model}, effort ${inv.effort})`);
   console.log(`Expected: ${s.rootCause}\n\n${inv.report ?? `Error: ${inv.error}`}`);
 }

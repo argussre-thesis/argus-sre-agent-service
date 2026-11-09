@@ -12,13 +12,14 @@ import { fail, ok } from "../types/serviceResponse.ts";
 import { parseQuery } from "../utils/parseQuery.ts";
 
 // LangChain's usage, the same for every provider. Its input_tokens include the cached ones.
-const usage = (m: BaseMessage, model: string) => {
+const usage = (m: BaseMessage, model: string, effort: string | null) => {
   const u = AIMessage.isInstance(m) ? m.usage_metadata : undefined;
   if (!u) return {};
   const cacheRead = u.input_token_details?.cache_read ?? 0;
   const cacheWrite = u.input_token_details?.cache_creation ?? 0;
   return {
     model,
+    effort,
     uncachedInputTokens: u.input_tokens - cacheRead - cacheWrite,
     cacheWriteTokens: cacheWrite,
     cacheReadTokens: cacheRead,
@@ -26,13 +27,12 @@ const usage = (m: BaseMessage, model: string) => {
   };
 };
 
-// LangChain's stored form ({ type, data }), which mapStoredMessagesToChatMessages turns back into messages.
-// It is plain JSON; the cast is only because its interfaces lack the index signature Prisma's JSON type wants.
-const messageRows = (messages: BaseMessage[], firstSeq: number, model: string) =>
+// Plain JSON; the cast is only because LangChain's interfaces lack the index signature Prisma's JSON type wants.
+const messageRows = (messages: BaseMessage[], firstSeq: number, model: string, effort: string | null) =>
   mapChatMessagesToStoredMessages(messages).map((data, i) => ({
     seq: firstSeq + i,
     data: data as unknown as Prisma.InputJsonObject,
-    ...usage(messages[i]!, model),
+    ...usage(messages[i]!, model, effort),
   }));
 
 const investigationNotFound = () => fail(404, "INVESTIGATION_NOT_FOUND", "Investigation not found");
@@ -87,32 +87,32 @@ const reportInvestigationEnded = async (
 
 // Saves the investigation with its incident, then runs it in the background: each step's messages are saved as they come.
 export const startInvestigationService = async (
-  { chatModel, model, effort, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, backendUrl, backendAgentServiceToken }: AppDeps,
+  { models, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, backendUrl, backendAgentServiceToken }: AppDeps,
   tenantId: string,
-  { incidentId, cluster, title, alerts, mcpServers }: StartInvestigationBody,
+  { incidentId, cluster, title, alerts, mcpServers, level }: StartInvestigationBody,
 ) => {
+  const { chatModel, model, effort } = models[level];
   const messages = [incidentMessage({ cluster, title, alerts })];
   const created = await prisma.$transaction(async (tx) => {
-    // lock until investigation creation is done.
+    // Serializes starts per incident, so two can't both pass the running check.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}), hashtext(${incidentId}))`;
     const running = await tx.investigation.findFirst({ where: { tenantId, incidentId, status: "running" }, select: { id: true } });
     if (running) return fail(409, "INVESTIGATION_RUNNING", "This incident already has a running investigation", running);
     return ok(
       await tx.investigation.create({
-        data: { tenantId, cluster, incidentId, model, effort, systemPrompt, messages: { create: messageRows(messages, 0, model) } },
+        data: { tenantId, cluster, incidentId, model, effort, systemPrompt, messages: { create: messageRows(messages, 0, model, effort) } },
         select: { id: true },
       }),
     );
   });
   if (!created.success) return created;
   const { id } = created.data;
-  log("info", "investigation started", { id, tenantId, cluster, incidentId });
+  log("info", "investigation started", { id, tenantId, cluster, incidentId, level, model, effort });
 
   let seq = messages.length;
-  // Do not await, invetigation is running in background
   runWithGateway(chatModel, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, tenantId, [cluster], mcpServers,
     async (added) => {
-    await prisma.message.createMany({ data: messageRows(added, seq, model).map((row) => ({ ...row, investigationId: id })) });
+    await prisma.message.createMany({ data: messageRows(added, seq, model, effort).map((row) => ({ ...row, investigationId: id })) });
     seq += added.length;
     }
   )
@@ -136,7 +136,6 @@ export const startInvestigationService = async (
   return ok({ id });
 };
 
-// At startup, marks investigations that were running when service stopped as failed.
 export const failInterruptedInvestigationsService = async () => {
   const { count } = await prisma.investigation.updateMany({
     where: { status: "running" },

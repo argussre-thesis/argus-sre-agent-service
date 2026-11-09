@@ -7,7 +7,6 @@ datasource db {
   provider = "postgresql"
 }
 
-// One agent run on one alert. It keeps the model and system prompt it ran with: a conversation must continue with the same ones.
 model Investigation {
   id           String              @id @default(cuid())
   tenantId     String              @map("tenant_id")
@@ -27,12 +26,13 @@ model Investigation {
   @@map("investigation")
 }
 
-// One message of the conversation, as LangChain stores it. seq is its position: 0 is the alert.
+// seq is the message's position: 0 is the alert.
 model Message {
   investigationId     String        @map("investigation_id")
   seq                 Int
   data                Json
   model               String?
+  effort              String?
   uncachedInputTokens Int?          @map("uncached_input_tokens")
   cacheWriteTokens    Int?          @map("cache_write_tokens")
   cacheReadTokens     Int?          @map("cache_read_tokens")

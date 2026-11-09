@@ -39,13 +39,15 @@ const newestRun = async (tenantId: string, incidentId: string) => {
 
 // Runs one turn in the background. Nothing is stored: the reply goes to the backend when the turn ends.
 export const sendConversationMessageService = async (
-  { chatModel, conversationPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, backendUrl, backendAgentServiceToken }: AppDeps,
+  { models, conversationPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, backendUrl, backendAgentServiceToken }: AppDeps,
   tenantId: string,
-  { externalId, text, clusters, incident, mcpServers }: ConversationMessageBody,
+  { externalId, text, clusters, incident, mcpServers, level }: ConversationMessageBody,
 ) => {
+  const { chatModel, model, effort } = models[level];
   const run = incident && (await newestRun(tenantId, incident.incidentId));
   const messages = [conversationMessage(text, clusters, incident, run)];
-  log("info", "conversation turn started", { tenantId, externalId });
+
+  log("info", "conversation turn started", { tenantId, externalId, level, model, effort });
 
   runConversationTurn(chatModel, conversationPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, tenantId, clusters, mcpServers)
     .then(
