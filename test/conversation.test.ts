@@ -84,7 +84,7 @@ async function serve(model: ReturnType<typeof fakeModel>, backendAt = backendUrl
     });
   return {
     send,
-    async turn(body: { externalId: string; text: string; incident?: ReturnType<typeof incident>; mcpServers?: (typeof mcpServer)[] }) {
+    async turn(body: { externalId: string; text: string; incident?: ReturnType<typeof incident>; mcpServers?: (typeof mcpServer)[]; maxModelCalls?: number }) {
       const before = callsFor(body.externalId).length;
       const calls = model.callCount;
       assert.equal((await send(body)).status, 202);
@@ -110,6 +110,7 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
     [{ ...good, incident: { ...incident("inc"), alerts: [] } }, /"incident"/],
     [{ ...good, tenantId: "t_2" }, /Unrecognized key: \\"tenantId\\"/],
     [{ ...good, mcpServers: [{ ...mcpServer, token: "" }] }, /"mcpServers"/],
+    [{ ...good, maxModelCalls: 0 }, /"maxModelCalls"/],
     // The list belongs on the request, not on the incident.
     [{ ...good, incident: { ...incident("inc"), mcpServers: [mcpServer] } }, /"incident"/],
   ];
@@ -158,8 +159,13 @@ test("outside an incident with no clusters: only the time, the clusters and the 
   const api = await serve(fakeModel().respond(reply("No cluster is connected.")));
   const requests = gw.requests.length;
   const message = await api.turn({ externalId: thread(), text: "what can you do?" });
-  assert.match(message, /^Current time: \S+Z\n\nClusters: none\n\nwhat can you do\?$/);
+  assert.match(message, /^Current time: \S+Z\nYou can respond at most 30 times[^\n]*\n\nClusters: none\n\nwhat can you do\?$/);
   assert.equal(gw.requests.length, requests);
+});
+
+test("the request's maxModelCalls is the budget the model is told", async () => {
+  const api = await serve(fakeModel().respond(reply("ok")));
+  assert.match(await api.turn({ externalId: thread(), text: "hi", maxModelCalls: 3 }), /You can respond at most 3 times/);
 });
 
 test("in an incident's thread each turn has the alerts and the newest report, so a rerun's report is seen, and nothing carries over", async () => {

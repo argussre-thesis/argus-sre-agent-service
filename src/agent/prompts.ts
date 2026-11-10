@@ -21,14 +21,20 @@ const part = (name: string, record: Record<string, string>) =>
 // The first message of an investigation: the incident, with its alerts grouped by rule, oldest first
 // (the first to fire is often closest to the cause). Shared labels and annotations are written once per group.
 // The time is here, not in the system prompt, so the prompt stays the same for caching and the thinking check.
+// Without it the model doesn't know the limit, and a run that hits it fails with no answer.
+const budgetLine = (maxModelCalls: number) =>
+  `You can respond at most ${maxModelCalls} times in this run, your final answer included. One response can make several tool calls at once.`;
+
 export function incidentMessage(
   incident: { cluster: string; title: string; alerts: IncidentAlert[] },
+  maxModelCalls: number,
   now = new Date(),
 ): HumanMessage {
   const { cluster, title, alerts } = incident;
   const firing = (as: IncidentAlert[]) => as.filter((a) => a.status === "FIRING").length;
   const lines = [
     `Current time: ${now.toISOString()}`,
+    budgetLine(maxModelCalls),
     `Incident in cluster "${cluster}", titled ${JSON.stringify(title)}: ${alerts.length} alert(s), ${firing(alerts)} firing, ${alerts.length - firing(alerts)} resolved.`,
     "Alerts are grouped by alertname, oldest first. A group's shared labels and annotations are shown once, then what is each alert's own.",
   ];
@@ -62,9 +68,12 @@ export function conversationMessage(
   clusters: string[],
   incident: { cluster: string; title: string; alerts: IncidentAlert[] } | undefined,
   run: { status: string; report: string | null; error: string | null } | undefined,
+  maxModelCalls: number,
   now = new Date(),
 ): HumanMessage {
-  const context = incident ? `${incidentMessage(incident, now).text}\n\n${runOutcome(run)}` : `Current time: ${now.toISOString()}`;
+  const context = incident
+    ? `${incidentMessage(incident, maxModelCalls, now).text}\n\n${runOutcome(run)}`
+    : `Current time: ${now.toISOString()}\n${budgetLine(maxModelCalls)}`;
   return new HumanMessage(`${context}\n\nClusters: ${clusters.join(", ") || "none"}\n\n${text}`);
 }
 

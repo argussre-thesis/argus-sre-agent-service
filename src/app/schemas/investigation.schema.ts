@@ -34,7 +34,9 @@ export const levelSchema = z.enum(LEVELS).default("low");
 
 export const webSearchSchema = z.boolean().default(false);
 
-export const startInvestigationSchema = incidentSchema.extend({ mcpServers: mcpServersSchema, level: levelSchema, webSearch: webSearchSchema });
+export const maxModelCallsSchema = z.number().int().positive().optional();
+
+export const startInvestigationSchema = incidentSchema.extend({ mcpServers: mcpServersSchema, level: levelSchema, webSearch: webSearchSchema, maxModelCalls: maxModelCallsSchema });
 export type StartInvestigationBody = z.infer<typeof startInvestigationSchema>;
 
 export const listInvestigationsQuerySchema = z.object({

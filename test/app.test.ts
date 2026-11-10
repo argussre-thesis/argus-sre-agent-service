@@ -122,6 +122,7 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
     [{ ...start, mcpServers: [{ name: "grafana", url: "https://mcp.example.com/", headers: { "api-key": "" } }] }, "VALIDATION_ERROR", /"mcpServers"/],
     [{ ...start, level: "max" }, "VALIDATION_ERROR", /"level"/],
     [{ ...start, webSearch: "yes" }, "VALIDATION_ERROR", /"webSearch"/],
+    [{ ...start, maxModelCalls: 2.5 }, "VALIDATION_ERROR", /"maxModelCalls"/],
     ['{"incidentId":', "INVALID_REQUEST_BODY", /JSON/],
   ];
   for (const [body, code, reason] of cases) {
@@ -246,7 +247,7 @@ test("a start answers 202 at once, the run goes on in the background, and the re
   assert.equal(gw.requests.at(-1)?.url, `/mcp/tenants/${tenant}/clusters/prod-eu`);
   assert.match(
     model.calls[0]!.messages[1]!.text,
-    /^Current time: \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\nIncident in cluster "prod-eu", titled "Pod is crash looping.": 1 alert\(s\), 1 firing, 0 resolved\.\n.*\nKubePodCrashLooping: 1 firing/s,
+    /^Current time: \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\nYou can respond at most 30 times[^\n]*\nIncident in cluster "prod-eu", titled "Pod is crash looping.": 1 alert\(s\), 1 firing, 0 resolved\.\n.*\nKubePodCrashLooping: 1 firing/s,
   );
   const row = await prisma.investigation.findUniqueOrThrow({ where: { id }, include: { messages: { orderBy: { seq: "asc" } } } });
   assert.equal(row.systemPrompt, INVESTIGATION_PROMPT);

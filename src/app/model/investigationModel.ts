@@ -87,12 +87,12 @@ const reportInvestigationEnded = async (
 
 // Saves the investigation with its incident, then runs it in the background: each step's messages are saved as they come.
 export const startInvestigationService = async (
-  { models, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, backendUrl, backendAgentServiceToken }: AppDeps,
+  { models, systemPrompt, maxModelCalls: defaultMaxModelCalls, gatewayUrl, agentGatewayToken, backendUrl, backendAgentServiceToken }: AppDeps,
   tenantId: string,
-  { incidentId, cluster, title, alerts, mcpServers, level, webSearch }: StartInvestigationBody,
+  { incidentId, cluster, title, alerts, mcpServers, level, webSearch, maxModelCalls = defaultMaxModelCalls }: StartInvestigationBody,
 ) => {
   const { chatModel, model, effort, webSearch: webSearchTool } = models[level];
-  const messages = [incidentMessage({ cluster, title, alerts })];
+  const messages = [incidentMessage({ cluster, title, alerts }, maxModelCalls)];
   const created = await prisma.$transaction(async (tx) => {
     // Serializes starts per incident, so two can't both pass the running check.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}), hashtext(${incidentId}))`;
@@ -107,7 +107,7 @@ export const startInvestigationService = async (
   });
   if (!created.success) return created;
   const { id } = created.data;
-  log("info", "investigation started", { id, tenantId, cluster, incidentId, level, model, effort, webSearch });
+  log("info", "investigation started", { id, tenantId, cluster, incidentId, level, model, effort, webSearch, maxModelCalls });
 
   let seq = messages.length;
   runWithGateway(chatModel, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, tenantId, [cluster], mcpServers, webSearch ? webSearchTool : null,

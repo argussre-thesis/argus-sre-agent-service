@@ -34,7 +34,7 @@ const report = await runWithGateway(
   config.maxModelCalls,
   config.gatewayUrl,
   config.agentGatewayToken,
-  [incidentMessage({ cluster: "minikube", title: alert.annotations.summary, alerts: [alert] })],
+  [incidentMessage({ cluster: "minikube", title: alert.annotations.summary, alerts: [alert] }, config.maxModelCalls)],
   tenantId,
   ["minikube"],
   [],
