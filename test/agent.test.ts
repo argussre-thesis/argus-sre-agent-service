@@ -20,7 +20,7 @@ const listPods = (args: Record<string, unknown>, id: string = crypto.randomUUID(
 async function run(model: ReturnType<typeof fakeModel>, maxModelCalls = 30, mcpServers: { name: string; url: string; token: string }[] = []) {
   const steps: BaseMessage[][] = [];
   const messages = [new HumanMessage("api pods crash-looping in demo")];
-  const report = await runWithGateway(model, INVESTIGATION_PROMPT, maxModelCalls, gw.url, agentGatewayToken, messages, "t_1", ["prod-eu"], mcpServers, async (added) => {
+  const report = await runWithGateway(model, INVESTIGATION_PROMPT, maxModelCalls, gw.url, agentGatewayToken, messages, "t_1", ["prod-eu"], mcpServers, null, async (added) => {
     steps.push(added);
   });
   return { report, steps };

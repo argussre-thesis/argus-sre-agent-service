@@ -41,15 +41,15 @@ const newestRun = async (tenantId: string, incidentId: string) => {
 export const sendConversationMessageService = async (
   { models, conversationPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, backendUrl, backendAgentServiceToken }: AppDeps,
   tenantId: string,
-  { externalId, text, clusters, incident, mcpServers, level }: ConversationMessageBody,
+  { externalId, text, clusters, incident, mcpServers, level, webSearch }: ConversationMessageBody,
 ) => {
-  const { chatModel, model, effort } = models[level];
+  const { chatModel, model, effort, webSearch: webSearchTool } = models[level];
   const run = incident && (await newestRun(tenantId, incident.incidentId));
   const messages = [conversationMessage(text, clusters, incident, run)];
 
-  log("info", "conversation turn started", { tenantId, externalId, level, model, effort });
+  log("info", "conversation turn started", { tenantId, externalId, level, model, effort, webSearch });
 
-  runConversationTurn(chatModel, conversationPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, tenantId, clusters, mcpServers)
+  runConversationTurn(chatModel, conversationPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, tenantId, clusters, mcpServers, webSearch ? webSearchTool : null)
     .then(
       (reply) => ({ status: "done" as const, reply, error: null }),
       (err: Error) => {

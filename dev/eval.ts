@@ -25,6 +25,7 @@ for (const s of scenarios.filter((s) => names.length === 0 || names.includes(s.n
       incidentId: `eval-${s.name}`,
       cluster: "minikube",
       level,
+      webSearch: process.env.DEV_WEB_SEARCH === "true",
       title: s.alert.annotations.summary!,
       alerts: [{ status: "FIRING", startsAt: new Date().toISOString(), ...s.alert }],
     }),

@@ -36,7 +36,7 @@ console.log(`${inv.id} (${inv.status}): ${history.length} stored messages, ${thi
 try {
   const messages = [...history, new HumanMessage(question)];
   // shortcut: only the investigation's own cluster (the list isn't stored); pass more names if a continuation needs them.
-  const answer = await runWithGateway(model, systemPrompt, config.maxModelCalls, config.gatewayUrl, config.agentGatewayToken, messages, inv.tenantId, [inv.cluster], [], async (added) => {
+  const answer = await runWithGateway(model, systemPrompt, config.maxModelCalls, config.gatewayUrl, config.agentGatewayToken, messages, inv.tenantId, [inv.cluster], [], null, async (added) => {
     for (const m of added) {
       if (ToolMessage.isInstance(m)) console.log(`  -> ${m.name}: ${m.status === "error" ? m.text : `${m.text.length} chars`}`);
       const u = AIMessage.isInstance(m) ? m.usage_metadata : undefined;

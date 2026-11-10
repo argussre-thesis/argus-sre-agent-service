@@ -1,5 +1,5 @@
-import { ChatAnthropic } from "@langchain/anthropic";
-import { ChatOpenAI } from "@langchain/openai";
+import { ChatAnthropic, tools as anthropicTools } from "@langchain/anthropic";
+import { ChatOpenAI, tools as openaiTools } from "@langchain/openai";
 import type { ModelConfig } from "../config.ts";
 
 const MAX_RETRIES = 2;
@@ -17,7 +17,7 @@ export function chatModel(m: ModelConfig) {
       maxRetries: MAX_RETRIES,
       clientOptions: { timeout: TIMEOUT_MS },
     });
-    return { name, model, effort: m.effort };
+    return { name, model, effort: m.effort, webSearch: anthropicTools.webSearch_20250305({ maxUses: 5 }) };
   }
 
   const model = new ChatOpenAI({
@@ -29,5 +29,5 @@ export function chatModel(m: ModelConfig) {
   });
 
   const params = model.invocationParams({});
-  return { name, model, effort: "reasoning" in params ? (params.reasoning?.effort ?? null) : null };
+  return { name, model, effort: "reasoning" in params ? (params.reasoning?.effort ?? null) : null, webSearch: openaiTools.webSearch() };
 }

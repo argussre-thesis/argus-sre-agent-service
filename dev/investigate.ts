@@ -22,8 +22,9 @@ const tenantId = process.env.DEV_TENANT_ID;
 if (!tenantId) throw new Error("set DEV_TENANT_ID in .env: the org id (org_…) of the minikube runner's token");
 const level = (process.env.DEV_LEVEL || "low") as Level;
 if (!LEVELS.includes(level)) throw new Error(`DEV_LEVEL must be one of ${LEVELS.join(", ")}`);
-const { name, model, effort } = chatModel(config.models[level]);
-console.log(`${level}: ${name}${effort ? `, effort ${effort}` : ""}, at most ${config.maxModelCalls} model calls\n`);
+const { name, model, effort, webSearch } = chatModel(config.models[level]);
+const withWebSearch = process.env.DEV_WEB_SEARCH === "true";
+console.log(`${level}: ${name}${effort ? `, effort ${effort}` : ""}, at most ${config.maxModelCalls} model calls${withWebSearch ? ", web search" : ""}\n`);
 
 const totals = { calls: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
 const started = Date.now();
@@ -37,6 +38,7 @@ const report = await runWithGateway(
   tenantId,
   ["minikube"],
   [],
+  withWebSearch ? webSearch : null,
   async (added) => {
     for (const m of added) {
       if (ToolMessage.isInstance(m)) console.log(`  -> ${m.name}: ${m.status === "error" ? m.text : `${m.text.length} chars`}`);

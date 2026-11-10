@@ -1,6 +1,7 @@
 import express from "express";
 import type { Level } from "../config.ts";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import type { ServerTool } from "@langchain/core/tools";
 import errorHandling from "./middleware/error/errorHandler.ts";
 import { requireInternalToken } from "./middleware/internalAuth.ts";
 import conversationRoutes from "./routes/conversation.route.ts";
@@ -8,7 +9,7 @@ import investigationRoutes from "./routes/investigation.route.ts";
 import { errorResponse } from "./utils/responseHandler.ts";
 
 export type AppDeps = {
-  models: Record<Level, { chatModel: BaseChatModel; model: string; effort: string | null }>;
+  models: Record<Level, { chatModel: BaseChatModel; model: string; effort: string | null; webSearch: ServerTool }>;
   systemPrompt: string;
   conversationPrompt: string;
   maxModelCalls: number;

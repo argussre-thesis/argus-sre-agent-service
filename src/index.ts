@@ -25,9 +25,9 @@ try {
 
 const models = {} as AppDeps["models"];
 for (const level of LEVELS) {
-  const { name, model, effort } = chatModel(config.models[level]);
+  const { name, model, effort, webSearch } = chatModel(config.models[level]);
   if (config.models[level].effort && !effort) log("warn", "effort ignored: this model takes no effort", { level, model: name });
-  models[level] = { chatModel: model, model: name, effort };
+  models[level] = { chatModel: model, model: name, effort, webSearch };
 }
 
 createApp({

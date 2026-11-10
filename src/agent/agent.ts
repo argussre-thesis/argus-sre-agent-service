@@ -46,6 +46,8 @@ function logStep(m: AIMessage, tenantId: string, clusters: string[]): void {
     clusters,
     stopReason: stopReason(m),
     toolCalls: m.tool_calls?.map(({ name, args }) => ({ name, args })),
+    // Web search run on providers side.
+    serverToolCalls: m.contentBlocks.flatMap((b) => (b.type === "server_tool_call" ? [{ name: b.name, args: b.args }] : [])),
     tokens: u && {
       input: u.input_tokens,
       cacheRead: u.input_token_details?.cache_read ?? 0,

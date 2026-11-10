@@ -1,5 +1,5 @@
 import * as z from "zod";
-import { incidentSchema, levelSchema, mcpServersSchema } from "./investigation.schema.ts";
+import { incidentSchema, levelSchema, mcpServersSchema, webSearchSchema } from "./investigation.schema.ts";
 
 export const conversationMessageSchema = z.strictObject({
   // Where the reply goes, e.g. Slack's <channel>:<thread_ts>. An opaque string here, handed back to the backend as it came.
@@ -10,5 +10,6 @@ export const conversationMessageSchema = z.strictObject({
   incident: incidentSchema.optional(),
   mcpServers: mcpServersSchema,
   level: levelSchema,
+  webSearch: webSearchSchema,
 });
 export type ConversationMessageBody = z.infer<typeof conversationMessageSchema>;

@@ -9,7 +9,7 @@ import { AIMessage, fakeModel } from "langchain";
 import { createApp } from "../src/app/app.ts";
 import { prisma } from "../src/app/lib/prisma.ts";
 import { CONVERSATION_PROMPT, INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
-import { fakeMcpGateway, unused } from "./helpers.ts";
+import { fakeMcpGateway, fakeWebSearch, unused } from "./helpers.ts";
 
 const gw = await fakeMcpGateway();
 after(() => gw.close());
@@ -64,7 +64,7 @@ const toolCall = () => new AIMessage({ content: "", tool_calls: [{ name: "list_p
 
 async function serve(model: ReturnType<typeof fakeModel>, backendAt = backendUrl) {
   const server = createApp({
-    models: { low: { chatModel: model, model: "fake:model", effort: "low" }, medium: unused("medium"), high: unused("high") },
+    models: { low: { chatModel: model, model: "fake:model", effort: "low", webSearch: fakeWebSearch }, medium: unused("medium"), high: unused("high") },
     systemPrompt: INVESTIGATION_PROMPT,
     conversationPrompt: CONVERSATION_PROMPT,
     maxModelCalls: 30,

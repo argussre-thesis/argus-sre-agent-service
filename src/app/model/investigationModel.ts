@@ -89,9 +89,9 @@ const reportInvestigationEnded = async (
 export const startInvestigationService = async (
   { models, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, backendUrl, backendAgentServiceToken }: AppDeps,
   tenantId: string,
-  { incidentId, cluster, title, alerts, mcpServers, level }: StartInvestigationBody,
+  { incidentId, cluster, title, alerts, mcpServers, level, webSearch }: StartInvestigationBody,
 ) => {
-  const { chatModel, model, effort } = models[level];
+  const { chatModel, model, effort, webSearch: webSearchTool } = models[level];
   const messages = [incidentMessage({ cluster, title, alerts })];
   const created = await prisma.$transaction(async (tx) => {
     // Serializes starts per incident, so two can't both pass the running check.
@@ -107,10 +107,10 @@ export const startInvestigationService = async (
   });
   if (!created.success) return created;
   const { id } = created.data;
-  log("info", "investigation started", { id, tenantId, cluster, incidentId, level, model, effort });
+  log("info", "investigation started", { id, tenantId, cluster, incidentId, level, model, effort, webSearch });
 
   let seq = messages.length;
-  runWithGateway(chatModel, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, tenantId, [cluster], mcpServers,
+  runWithGateway(chatModel, systemPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, tenantId, [cluster], mcpServers, webSearch ? webSearchTool : null,
     async (added) => {
     await prisma.message.createMany({ data: messageRows(added, seq, model, effort).map((row) => ({ ...row, investigationId: id })) });
     seq += added.length;

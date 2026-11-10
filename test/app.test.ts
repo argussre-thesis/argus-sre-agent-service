@@ -10,7 +10,7 @@ import { AIMessage, fakeModel } from "langchain";
 import { createApp } from "../src/app/app.ts";
 import { prisma } from "../src/app/lib/prisma.ts";
 import { CONVERSATION_PROMPT, INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
-import { fakeMcpGateway, unused } from "./helpers.ts";
+import { fakeMcpGateway, fakeWebSearch, unused } from "./helpers.ts";
 
 const gw = await fakeMcpGateway();
 after(() => gw.close());
@@ -60,7 +60,7 @@ const toolCallReply = () =>
 
 async function serve(model: ReturnType<typeof fakeModel>, gatewayUrl = gw.url) {
   const server = createApp({
-    models: { low: { chatModel: model, model: "fake:model", effort: "low" }, medium: unused("medium"), high: unused("high") },
+    models: { low: { chatModel: model, model: "fake:model", effort: "low", webSearch: fakeWebSearch }, medium: unused("medium"), high: unused("high") },
     systemPrompt: INVESTIGATION_PROMPT,
     conversationPrompt: CONVERSATION_PROMPT,
     maxModelCalls: 30,
@@ -121,6 +121,7 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
     [{ ...start, mcpServers: [{ name: "grafana", url: "https://mcp.example.com/", token: "x", headers: { "api-key": "y" } }] }, "VALIDATION_ERROR", /"mcpServers"/],
     [{ ...start, mcpServers: [{ name: "grafana", url: "https://mcp.example.com/", headers: { "api-key": "" } }] }, "VALIDATION_ERROR", /"mcpServers"/],
     [{ ...start, level: "max" }, "VALIDATION_ERROR", /"level"/],
+    [{ ...start, webSearch: "yes" }, "VALIDATION_ERROR", /"webSearch"/],
     ['{"incidentId":', "INVALID_REQUEST_BODY", /JSON/],
   ];
   for (const [body, code, reason] of cases) {
@@ -174,6 +175,19 @@ test("the request's level picks the model and effort the run is stored with; non
   await api.finished(high.data.id);
   const low = await (await api.post({ ...start, incidentId: randomUUID() })).json();
   assert.equal((await api.finished(low.data.id)).model, "fake:model");
+});
+
+test("web search reaches the model only when the request turns it on", async () => {
+  const model = fakeModel().respond(reportReply()).respond(reportReply());
+  let bound: unknown[][] = [];
+  const bindTools = model.bindTools.bind(model);
+  model.bindTools = (tools) => (bound.push(tools), bindTools(tools));
+  const api = await serve(model);
+  for (const webSearch of [undefined, true]) {
+    bound = [];
+    await api.finished((await (await api.post({ ...start, incidentId: randomUUID(), webSearch })).json()).data.id);
+    assert.ok(bound.length > 0 && bound.every((tools) => tools.includes(fakeWebSearch) === Boolean(webSearch)));
+  }
 });
 
 test("a start answers 202 at once, the run goes on in the background, and the report and transcript are read", async () => {
