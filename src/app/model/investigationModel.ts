@@ -1,5 +1,5 @@
 import { mapChatMessagesToStoredMessages } from "@langchain/core/messages";
-import { AIMessage, type BaseMessage } from "langchain";
+import type { BaseMessage } from "langchain";
 import { runWithGateway } from "../../agent/sreAgent.ts";
 import { reason } from "../../agent/mcp.ts";
 import { incidentMessage } from "../../agent/prompts.ts";
@@ -10,22 +10,7 @@ import type { Prisma } from "../prisma/generated/prisma/client.ts";
 import { listInvestigationsQuerySchema, type StartInvestigationBody } from "../schemas/investigation.schema.ts";
 import { fail, ok } from "../types/serviceResponse.ts";
 import { parseQuery } from "../utils/parseQuery.ts";
-
-// LangChain's usage, the same for every provider. Its input_tokens include the cached ones.
-const usage = (m: BaseMessage, model: string, effort: string | null) => {
-  const u = AIMessage.isInstance(m) ? m.usage_metadata : undefined;
-  if (!u) return {};
-  const cacheRead = u.input_token_details?.cache_read ?? 0;
-  const cacheWrite = u.input_token_details?.cache_creation ?? 0;
-  return {
-    model,
-    effort,
-    uncachedInputTokens: u.input_tokens - cacheRead - cacheWrite,
-    cacheWriteTokens: cacheWrite,
-    cacheReadTokens: cacheRead,
-    outputTokens: u.output_tokens,
-  };
-};
+import { usage } from "../utils/usage.ts";
 
 // Plain JSON; the cast is only because LangChain's interfaces lack the index signature Prisma's JSON type wants.
 const messageRows = (messages: BaseMessage[], firstSeq: number, model: string, effort: string | null) =>
@@ -123,30 +108,29 @@ export const startInvestigationService = async (
         return { status: "failed" as const, error: err.message };
       },
     )
-    .then
-    (
-      async (end) => { 
-        const {_sum} = await prisma.message.aggregate({ _sum: {outputTokens: true, cacheReadTokens:true, cacheWriteTokens:true, uncachedInputTokens: true}, where: {investigationId: id}});
-         await prisma.usage.create({
-          data: {
-            tenantId,
-            source: "investigation",
-            investigationId: id,
-            model,
-            effort,
-            status: end.status,
-            modelCalls: maxModelCalls,
-            outputTokens: _sum.outputTokens ?? 0,
-            cacheReadTokens: _sum.cacheReadTokens ?? 0,
-            cacheWriteTokens: _sum.cacheWriteTokens ?? 0,
-            uncachedInputTokens: _sum.uncachedInputTokens ?? 0,
-          },
-        });
-        return prisma.investigation.update({ where: { id }, data: { ...end, finishedAt: new Date() } })
-      }
-    )
-    .then(({ status, report, error }) => {
+    .then((end) => prisma.investigation.update({ where: { id }, data: { ...end, finishedAt: new Date() } }))
+    .then(async ({ status, report, error }) => {
       log("info", "investigation finished", { id, status, steps: seq - 1 });
+      await prisma.message
+        .aggregate({ _sum: { uncachedInputTokens: true, cacheWriteTokens: true, cacheReadTokens: true, outputTokens: true }, _count: { model: true }, where: { investigationId: id } })
+        .then(({ _sum, _count }) =>
+          prisma.usage.create({
+            data: {
+              tenantId,
+              source: "investigation",
+              investigationId: id,
+              model,
+              effort,
+              status,
+              modelCalls: _count.model,
+              uncachedInputTokens: _sum.uncachedInputTokens ?? 0,
+              cacheWriteTokens: _sum.cacheWriteTokens ?? 0,
+              cacheReadTokens: _sum.cacheReadTokens ?? 0,
+              outputTokens: _sum.outputTokens ?? 0,
+            },
+          }),
+        )
+        .catch((err: Error) => log("error", "cannot save the investigation's usage", { id, error: err.stack ?? String(err) }));
       // A failed call only logged
       reportInvestigationEnded(backendUrl, backendAgentServiceToken, tenantId, incidentId, id, status, report, error)
         .then((posted) => log("info", "backend told the investigation ended", { id, posted }))

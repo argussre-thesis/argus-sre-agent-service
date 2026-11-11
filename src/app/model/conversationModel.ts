@@ -1,3 +1,4 @@
+import type { BaseMessage } from "langchain";
 import { runConversationTurn } from "../../agent/conversationAgent.ts";
 import { reason } from "../../agent/mcp.ts";
 import { conversationMessage } from "../../agent/prompts.ts";
@@ -6,6 +7,7 @@ import type { AppDeps } from "../app.ts";
 import { prisma } from "../lib/prisma.ts";
 import type { ConversationMessageBody } from "../schemas/conversation.schema.ts";
 import { ok } from "../types/serviceResponse.ts";
+import { usage } from "../utils/usage.ts";
 
 const reportConversationEnded = async (
   backendUrl: string,
@@ -37,7 +39,7 @@ const newestRun = async (tenantId: string, incidentId: string) => {
   return runs.find((r) => r.status === "done") ?? runs[0];
 };
 
-// Runs one turn in the background. Nothing is stored: the reply goes to the backend when the turn ends.
+// Runs one turn in the background. Only its usage is stored: the reply goes to the backend when the turn ends.
 export const sendConversationMessageService = async (
   { models, conversationPrompt, maxModelCalls: defaultMaxModelCalls, gatewayUrl, agentGatewayToken, backendUrl, backendAgentServiceToken }: AppDeps,
   tenantId: string,
@@ -49,7 +51,20 @@ export const sendConversationMessageService = async (
 
   log("info", "conversation turn started", { tenantId, externalId, level, model, effort, webSearch, maxModelCalls });
 
-  runConversationTurn(chatModel, conversationPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, tenantId, clusters, mcpServers, webSearch ? webSearchTool : null)
+  const total = { modelCalls: 0, uncachedInputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 0 };
+  const addUsage = async (added: BaseMessage[]) => {
+    for (const m of added) {
+      const u = usage(m, model, effort);
+      if (u.model === undefined) continue;
+      total.modelCalls++;
+      total.uncachedInputTokens += u.uncachedInputTokens;
+      total.cacheWriteTokens += u.cacheWriteTokens;
+      total.cacheReadTokens += u.cacheReadTokens;
+      total.outputTokens += u.outputTokens;
+    }
+  };
+
+  runConversationTurn(chatModel, conversationPrompt, maxModelCalls, gatewayUrl, agentGatewayToken, messages, tenantId, clusters, mcpServers, webSearch ? webSearchTool : null, addUsage)
     .then(
       (reply) => ({ status: "done" as const, reply, error: null }),
       (err: Error) => {
@@ -57,8 +72,11 @@ export const sendConversationMessageService = async (
         return { status: "failed" as const, reply: null, error: err.message };
       },
     )
-    .then(({ status, reply, error }) => {
-      log("info", "conversation turn finished", { tenantId, externalId, status });
+    .then(async ({ status, reply, error }) => {
+      log("info", "conversation turn finished", { tenantId, externalId, status, ...total });
+      await prisma.usage
+        .create({ data: { tenantId, source: "slack", model, effort, status, ...total } })
+        .catch((err: Error) => log("error", "cannot save the conversation turn's usage", { tenantId, externalId, error: err.stack ?? String(err) }));
       return reportConversationEnded(backendUrl, backendAgentServiceToken, tenantId, externalId, status, reply, error);
     })
     .then((posted) => log("info", "backend told the conversation turn ended", { tenantId, externalId, posted }))
