@@ -38,6 +38,7 @@ async function endedCall(investigationId: string) {
 // shortcut: no test database, these tests use DATABASE_URL's (.env) and delete only what they started; a test database for CI.
 const started: string[] = [];
 after(async () => {
+  await prisma.usage.deleteMany({ where: { investigationId: { in: started } } });
   await prisma.investigation.deleteMany({ where: { id: { in: started } } });
   await prisma.$disconnect();
 });
@@ -265,6 +266,28 @@ test("a start answers 202 at once, the run goes on in the background, and the re
       ["fake:model", "low", 1561, 0, 0, 100],
       [null, null, null, null, null, null],
       ["fake:model", "low", 4, 1489, 3588, 2011],
+    ],
+  );
+  // Saved before the backend is told, so it's there once endedCall returns.
+  assert.deepEqual(
+    await prisma.usage.findMany({
+      where: { investigationId: id },
+      omit: { id: true, createdAt: true },
+    }),
+    [
+      {
+        tenantId: tenant,
+        source: "investigation",
+        investigationId: id,
+        model: "fake:model",
+        effort: "low",
+        status: "done",
+        modelCalls: 2,
+        uncachedInputTokens: 1565,
+        cacheWriteTokens: 1489,
+        cacheReadTokens: 3588,
+        outputTokens: 2111,
+      },
     ],
   );
   const transcript = await (await api.get(`/${id}/messages`)).json();

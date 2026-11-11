@@ -18,7 +18,6 @@ import { connectTools, type McpServer } from "./mcp.ts";
 import { unusableSystemsMessage } from "./prompts.ts";
 
 export function createSreAgent(model: BaseChatModel, systemPrompt: string, tools: (StructuredTool | ServerTool)[], maxModelCalls: number) {
-  console.log("TOOLS", tools)
   return createAgent({
     model,
     systemPrompt,
