@@ -169,7 +169,7 @@ export async function connectMcpServers(servers: McpServer[], fetchFn: FetchLike
   };
 }
 
-// Everything one run can use. Only the gateway can fail the run; with no clusters it isn't contacted.
+// Everything one run can use. Nothing fails the run: what can't be reached is listed in `failed`. With no clusters the gateway isn't contacted.
 export async function connectTools(
   gatewayUrl: string,
   token: string,
@@ -178,12 +178,21 @@ export async function connectTools(
   mcpServers: McpServer[],
   fetchFn: FetchLike = publicFetch,
 ) {
-  const gateway = clusters.length > 0 ? await connectGateway(gatewayUrl, token, tenantId, clusters) : { tools: [], close: async () => {} };
   const mcp = await connectMcpServers(mcpServers, fetchFn);
+  let gateway: Awaited<ReturnType<typeof connectGateway>> = { tools: [], close: async () => {} };
+  const gatewayFailed = [];
+  if (clusters.length > 0) {
+    try {
+      gateway = await connectGateway(gatewayUrl, token, tenantId, clusters);
+    } catch (err) {
+      gatewayFailed.push({ name: "gateway", reason: reason(err).slice(0, MAX_REASON_CHARS) });
+    }
+  }
 
   const taken = new Set(gateway.tools.map((t) => t.name));
   const clashing = mcp.tools.filter((t) => taken.has(t.name));
   const failed = [
+    ...gatewayFailed,
     ...mcp.failed,
     ...clashing.map((t) => ({ name: t.name.split("_")[0]!, reason: `its tool ${t.name} has the same name as a built-in tool` })),
   ];

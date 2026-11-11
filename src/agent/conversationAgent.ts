@@ -45,7 +45,7 @@ export async function runConversationTurn(
 ): Promise<string> {
   const { tools, failed, close } = await connectTools(gatewayUrl, agentGatewayToken, tenantId, clusters, mcpServers);
   try {
-    const note = failed.length > 0 ? [unusableSystemsMessage(failed)] : [];
+    const note = failed.length > 0 ? [unusableSystemsMessage(failed, tools.length === 0 && !webSearch)] : [];
     return await runAgent(createConversationAgent(model, systemPrompt, webSearch ? [...tools, webSearch] : tools, maxModelCalls), [...note, ...messages], tenantId, clusters, keepNothing);
   } finally {
     await close();
