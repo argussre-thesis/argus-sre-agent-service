@@ -123,7 +123,28 @@ export const startInvestigationService = async (
         return { status: "failed" as const, error: err.message };
       },
     )
-    .then((end) => prisma.investigation.update({ where: { id }, data: { ...end, finishedAt: new Date() } }))
+    .then
+    (
+      async (end) => { 
+        const {_sum} = await prisma.message.aggregate({ _sum: {outputTokens: true, cacheReadTokens:true, cacheWriteTokens:true, uncachedInputTokens: true}, where: {investigationId: id}});
+         await prisma.usage.create({
+          data: {
+            tenantId,
+            source: "investigation",
+            investigationId: id,
+            model,
+            effort,
+            status: end.status,
+            modelCalls: maxModelCalls,
+            outputTokens: _sum.outputTokens ?? 0,
+            cacheReadTokens: _sum.cacheReadTokens ?? 0,
+            cacheWriteTokens: _sum.cacheWriteTokens ?? 0,
+            uncachedInputTokens: _sum.uncachedInputTokens ?? 0,
+          },
+        });
+        return prisma.investigation.update({ where: { id }, data: { ...end, finishedAt: new Date() } })
+      }
+    )
     .then(({ status, report, error }) => {
       log("info", "investigation finished", { id, status, steps: seq - 1 });
       // A failed call only logged

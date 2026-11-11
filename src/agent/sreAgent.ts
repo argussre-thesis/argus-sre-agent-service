@@ -18,6 +18,7 @@ import { connectTools, type McpServer } from "./mcp.ts";
 import { unusableSystemsMessage } from "./prompts.ts";
 
 export function createSreAgent(model: BaseChatModel, systemPrompt: string, tools: (StructuredTool | ServerTool)[], maxModelCalls: number) {
+  console.log("TOOLS", tools)
   return createAgent({
     model,
     systemPrompt,
@@ -69,7 +70,8 @@ export async function runWithGateway(
 ): Promise<string> {
   const { tools, failed, close } = await connectTools(gatewayUrl, agentGatewayToken, tenantId, clusters, mcpServers);
   try {
-    const note = failed.length > 0 ? [unusableSystemsMessage(failed)] : [];
+    if (tools.length === 0 && !webSearch) throw new Error("the investigation can't start without tools");
+    const note = failed.length > 0 ? [unusableSystemsMessage(failed, false)] : [];
     if (note.length > 0) await onStep(note);
     return await runAgent(createSreAgent(model, systemPrompt, webSearch ? [...tools, webSearch] : tools, maxModelCalls), [...messages, ...note], tenantId, clusters, onStep);
   } finally {

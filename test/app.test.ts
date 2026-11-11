@@ -306,7 +306,7 @@ test("a gateway that can't be reached fails the investigation before any model c
   const { id } = (await (await api.post({ ...start, incidentId: "inc_no_gateway" })).json()).data;
   const failed = await api.finished(id);
   assert.equal(failed.status, "failed");
-  assert.equal(failed.error, `cannot reach the gateway: fetch failed: connect ECONNREFUSED 127.0.0.1:${port}`);
+  assert.equal(failed.error, "the investigation can't start without tools");
   assert.equal(model.callCount, 0);
 });
 

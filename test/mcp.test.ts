@@ -342,11 +342,15 @@ test("a server's tool named like a gateway tool is left out and named, and the g
   assert.deepEqual([gw.calls, clash.calls], [[demo], []]);
 });
 
-test("an unreachable gateway fails the run, before any server is contacted", async (t) => {
+test("an unreachable gateway is listed as failed, and the other servers' tools are still loaded", async (t) => {
   const [gw, grafana] = [await mcpServers(t), await mcpServers(t)];
   gw.fail(1);
-  await assert.rejects(connectTools(gw.url, TOKEN, "t_1", ["prod-eu"], [server("grafana", grafana.url)], fetch), /cannot reach the gateway/);
-  assert.deepEqual(grafana.requests, []);
+  const { tools, failed, close } = await connectTools(gw.url, TOKEN, "t_1", ["prod-eu"], [server("grafana", grafana.url)], fetch);
+  t.after(close);
+  assert.ok(tools.length > 0 && tools.every((t) => t.name.startsWith("grafana_")));
+  assert.equal(failed.length, 1);
+  assert.equal(failed[0]!.name, "gateway");
+  assert.match(failed[0]!.reason, /^cannot reach the gateway/);
 });
 
 test("during a run, a tool's error and a dead server come back to the model as text", async (t) => {
