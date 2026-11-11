@@ -1,5 +1,5 @@
 import { mapChatMessagesToStoredMessages } from "@langchain/core/messages";
-import { AIMessage, type BaseMessage } from "langchain";
+import type { BaseMessage } from "langchain";
 import { runWithGateway } from "../../agent/sreAgent.ts";
 import { reason } from "../../agent/mcp.ts";
 import { incidentMessage } from "../../agent/prompts.ts";
@@ -10,22 +10,7 @@ import type { Prisma } from "../prisma/generated/prisma/client.ts";
 import { listInvestigationsQuerySchema, type StartInvestigationBody } from "../schemas/investigation.schema.ts";
 import { fail, ok } from "../types/serviceResponse.ts";
 import { parseQuery } from "../utils/parseQuery.ts";
-
-// LangChain's usage, the same for every provider. Its input_tokens include the cached ones.
-const usage = (m: BaseMessage, model: string, effort: string | null) => {
-  const u = AIMessage.isInstance(m) ? m.usage_metadata : undefined;
-  if (!u) return {};
-  const cacheRead = u.input_token_details?.cache_read ?? 0;
-  const cacheWrite = u.input_token_details?.cache_creation ?? 0;
-  return {
-    model,
-    effort,
-    uncachedInputTokens: u.input_tokens - cacheRead - cacheWrite,
-    cacheWriteTokens: cacheWrite,
-    cacheReadTokens: cacheRead,
-    outputTokens: u.output_tokens,
-  };
-};
+import { usage } from "../utils/usage.ts";
 
 // Plain JSON; the cast is only because LangChain's interfaces lack the index signature Prisma's JSON type wants.
 const messageRows = (messages: BaseMessage[], firstSeq: number, model: string, effort: string | null) =>
