@@ -7,7 +7,7 @@ import pkg from "../../package.json" with { type: "json" };
 import { log } from "../log.ts";
 import { publicFetch } from "./publicFetch.ts";
 
-export type McpServer = { name: string; url: string; token: string };
+export type McpServer = { name: string; url: string } & ({ token: string } | { headers: Record<string, string> });
 
 const TIMEOUT_MS = 30_000;
 const MAX_RESULT_CHARS = 20_000;
@@ -29,11 +29,11 @@ export function reason(err: unknown): string {
 
 const resultText = (result: CallToolResult) => capped(result.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("\n"));
 
-async function openClient(url: URL, token: string, fetchFn?: FetchLike): Promise<Client> {
+async function openClient(url: URL, headers: Record<string, string>, fetchFn?: FetchLike): Promise<Client> {
   const client = new Client({ name: "argus-agent-service", version: pkg.version });
   const transport = new StreamableHTTPClientTransport(url, {
     fetch: fetchFn,
-    requestInit: { headers: { authorization: `Bearer ${token}` } },
+    requestInit: { headers },
   });
   try {
     await client.connect(transport, { timeout: TIMEOUT_MS });
@@ -46,7 +46,7 @@ async function openClient(url: URL, token: string, fetchFn?: FetchLike): Promise
 
 function open(gatewayUrl: string, token: string, tenantId: string, cluster: string): Promise<Client> {
   const path = `/mcp/tenants/${encodeURIComponent(tenantId)}/clusters/${encodeURIComponent(cluster)}`;
-  return openClient(new URL(path, gatewayUrl), token);
+  return openClient(new URL(path, gatewayUrl), { authorization: `Bearer ${token}` });
 }
 
 export async function connectGateway(gatewayUrl: string, token: string, tenantId: string, clusters: string[]) {
@@ -72,16 +72,15 @@ export async function connectGateway(gatewayUrl: string, token: string, tenantId
     await close();
     throw new Error(`cannot reach the gateway: ${reason(err)}`);
   }
-  // Check 
   const clash = listed.tools.find((t) => t.inputSchema.properties && "cluster" in t.inputSchema.properties);
   if (clash) {
     await close();
     throw new Error(`the gateway's ${clash.name} tool has a "cluster" argument of its own`);
   }
 
-  // by default cluster[0], tool can override it. 
+  // clusters[0] unless the model names a cluster.
   const call = async (name: string, { cluster = clusters[0], ...args }: Record<string, unknown>) => {
-    try {            //call tool    // connect to cluster
+    try {
       const result = (await (await client(cluster as string)).callTool({ name, arguments: args }, undefined, { timeout: TIMEOUT_MS })) as CallToolResult;
       return resultText(result);
     } catch (err) {
@@ -108,8 +107,10 @@ export async function connectGateway(gatewayUrl: string, token: string, tenantId
   return { tools, close };
 }
 
-async function connectMcpServer({ name: server, url, token }: McpServer, fetchFn: FetchLike) {
-  const client = await openClient(new URL(url), token, fetchFn);
+async function connectMcpServer(mcpServer: McpServer, fetchFn: FetchLike) {
+  const { name: server, url } = mcpServer;
+  const headers = "headers" in mcpServer ? mcpServer.headers : { authorization: `Bearer ${mcpServer.token}` };
+  const client = await openClient(new URL(url), headers, fetchFn);
   try {
     const { tools: listed, nextCursor } = await client.listTools(undefined, { timeout: TIMEOUT_MS });
     const seen = new Set<string>();
@@ -168,7 +169,7 @@ export async function connectMcpServers(servers: McpServer[], fetchFn: FetchLike
   };
 }
 
-// Everything one run can use. Only the gateway can fail the run; with no clusters it isn't contacted.
+// Everything one run can use. Nothing fails the run: what can't be reached is listed in `failed`. With no clusters the gateway isn't contacted.
 export async function connectTools(
   gatewayUrl: string,
   token: string,
@@ -177,12 +178,21 @@ export async function connectTools(
   mcpServers: McpServer[],
   fetchFn: FetchLike = publicFetch,
 ) {
-  const gateway = clusters.length > 0 ? await connectGateway(gatewayUrl, token, tenantId, clusters) : { tools: [], close: async () => {} };
   const mcp = await connectMcpServers(mcpServers, fetchFn);
+  let gateway: Awaited<ReturnType<typeof connectGateway>> = { tools: [], close: async () => {} };
+  const gatewayFailed = [];
+  if (clusters.length > 0) {
+    try {
+      gateway = await connectGateway(gatewayUrl, token, tenantId, clusters);
+    } catch (err) {
+      gatewayFailed.push({ name: "gateway", reason: reason(err).slice(0, MAX_REASON_CHARS) });
+    }
+  }
 
   const taken = new Set(gateway.tools.map((t) => t.name));
   const clashing = mcp.tools.filter((t) => taken.has(t.name));
   const failed = [
+    ...gatewayFailed,
     ...mcp.failed,
     ...clashing.map((t) => ({ name: t.name.split("_")[0]!, reason: `its tool ${t.name} has the same name as a built-in tool` })),
   ];

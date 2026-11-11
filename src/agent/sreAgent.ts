@@ -1,5 +1,5 @@
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import type { StructuredTool } from "@langchain/core/tools";
+import type { ServerTool, StructuredTool } from "@langchain/core/tools";
 import {
   AIMessage,
   anthropicPromptCachingMiddleware,
@@ -17,7 +17,7 @@ import { log } from "../log.ts";
 import { connectTools, type McpServer } from "./mcp.ts";
 import { unusableSystemsMessage } from "./prompts.ts";
 
-export function createSreAgent(model: BaseChatModel, systemPrompt: string, tools: StructuredTool[], maxModelCalls: number) {
+export function createSreAgent(model: BaseChatModel, systemPrompt: string, tools: (StructuredTool | ServerTool)[], maxModelCalls: number) {
   return createAgent({
     model,
     systemPrompt,
@@ -28,7 +28,7 @@ export function createSreAgent(model: BaseChatModel, systemPrompt: string, tools
       }),
       citationCheck,
       modelCallLimitMiddleware({ runLimit: maxModelCalls, exitBehavior: "error" }),
-      anthropicPromptCachingMiddleware({ unsupportedModelBehavior: "ignore" }),
+      anthropicPromptCachingMiddleware({ minMessagesToCache: 1, unsupportedModelBehavior: "ignore" }),
     ],
   }).withConfig({ recursionLimit: 10 * maxModelCalls });
 }
@@ -64,13 +64,15 @@ export async function runWithGateway(
   tenantId: string,
   clusters: string[],
   mcpServers: McpServer[],
+  webSearch: ServerTool | null,
   onStep: (added: BaseMessage[]) => Promise<void>,
 ): Promise<string> {
   const { tools, failed, close } = await connectTools(gatewayUrl, agentGatewayToken, tenantId, clusters, mcpServers);
   try {
-    const note = failed.length > 0 ? [unusableSystemsMessage(failed)] : [];
+    if (tools.length === 0 && !webSearch) throw new Error("the investigation can't start without tools");
+    const note = failed.length > 0 ? [unusableSystemsMessage(failed, false)] : [];
     if (note.length > 0) await onStep(note);
-    return await runAgent(createSreAgent(model, systemPrompt, tools, maxModelCalls), [...messages, ...note], tenantId, clusters, onStep);
+    return await runAgent(createSreAgent(model, systemPrompt, webSearch ? [...tools, webSearch] : tools, maxModelCalls), [...messages, ...note], tenantId, clusters, onStep);
   } finally {
     await close();
   }

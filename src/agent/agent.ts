@@ -16,8 +16,7 @@ export function finished(m: AIMessage): boolean {
   return reason === undefined || FINISHED.includes(reason);
 }
 
-// Runs the agent until it answers and returns the answer. `onStep` gets each step's new messages, in order.
-// Throws when the run ends any other way: call limit, max_tokens, refusal, API error.
+// Throws unless the model ends with an answer: call limit, max_tokens, refusal, API error.
 export async function runAgent(
   agent: StreamingAgent,
   messages: BaseMessage[],
@@ -47,6 +46,8 @@ function logStep(m: AIMessage, tenantId: string, clusters: string[]): void {
     clusters,
     stopReason: stopReason(m),
     toolCalls: m.tool_calls?.map(({ name, args }) => ({ name, args })),
+    // Web search run on providers side.
+    serverToolCalls: m.contentBlocks.flatMap((b) => (b.type === "server_tool_call" ? [{ name: b.name, args: b.args }] : [])),
     tokens: u && {
       input: u.input_tokens,
       cacheRead: u.input_token_details?.cache_read ?? 0,

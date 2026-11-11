@@ -26,7 +26,6 @@ test("OpenAI: nothing but the model name, same retries and timeout", () => {
   const { name, model } = chatModel({ provider: "openai", name: "gpt-5" });
   assert.equal(name, "openai:gpt-5");
   assert.ok(model instanceof ChatOpenAI);
-  // As sent: the unset options are undefined keys, which JSON drops.
   // The Responses API's shape (Chat Completions has no "text"); nothing else, so OpenAI runs on its defaults.
   assert.deepEqual(JSON.parse(JSON.stringify(model.invocationParams({}))), { model: "gpt-5", stream: false, text: {} });
   assert.equal(model.caller["maxRetries"], 2);

@@ -10,7 +10,7 @@ import { AIMessage, fakeModel } from "langchain";
 import { createApp } from "../src/app/app.ts";
 import { prisma } from "../src/app/lib/prisma.ts";
 import { CONVERSATION_PROMPT, INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
-import { fakeMcpGateway } from "./helpers.ts";
+import { fakeMcpGateway, fakeWebSearch, unused } from "./helpers.ts";
 
 const gw = await fakeMcpGateway();
 after(() => gw.close());
@@ -38,6 +38,7 @@ async function endedCall(investigationId: string) {
 // shortcut: no test database, these tests use DATABASE_URL's (.env) and delete only what they started; a test database for CI.
 const started: string[] = [];
 after(async () => {
+  await prisma.usage.deleteMany({ where: { investigationId: { in: started } } });
   await prisma.investigation.deleteMany({ where: { id: { in: started } } });
   await prisma.$disconnect();
 });
@@ -60,9 +61,7 @@ const toolCallReply = () =>
 
 async function serve(model: ReturnType<typeof fakeModel>, gatewayUrl = gw.url) {
   const server = createApp({
-    chatModel: model,
-    model: "fake:model",
-    effort: "low",
+    models: { low: { chatModel: model, model: "fake:model", effort: "low", webSearch: fakeWebSearch }, medium: unused("medium"), high: unused("high") },
     systemPrompt: INVESTIGATION_PROMPT,
     conversationPrompt: CONVERSATION_PROMPT,
     maxModelCalls: 30,
@@ -110,7 +109,6 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
     [{ ...start, alerts: [] }, "VALIDATION_ERROR", /"alerts"/],
     [{ ...start, alerts: "down" }, "VALIDATION_ERROR", /"alerts"/],
     [{ ...start, alerts: [[]] }, "VALIDATION_ERROR", /"alerts"/],
-    // An alert has the backend's fields and values.
     [{ ...start, alerts: [{ ...alert, status: "firing" }] }, "VALIDATION_ERROR", /"alerts"/],
     [{ ...start, alerts: [{ ...alert, startsAt: "yesterday" }] }, "VALIDATION_ERROR", /"alerts"/],
     [{ ...start, alerts: [{ ...alert, labels: { severity: 1 } }] }, "VALIDATION_ERROR", /"alerts"/],
@@ -121,6 +119,11 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
     [{ ...start, mcpServers: [{ name: "Bad_Name", url: "https://mcp.example.com/", token: "x" }] }, "VALIDATION_ERROR", /"mcpServers"/],
     [{ ...start, mcpServers: [{ name: "grafana", url: "https://mcp.example.com/" }] }, "VALIDATION_ERROR", /"mcpServers"/],
     [{ ...start, mcpServers: [{ name: "grafana", url: "", token: "x" }] }, "VALIDATION_ERROR", /"mcpServers"/],
+    [{ ...start, mcpServers: [{ name: "grafana", url: "https://mcp.example.com/", token: "x", headers: { "api-key": "y" } }] }, "VALIDATION_ERROR", /"mcpServers"/],
+    [{ ...start, mcpServers: [{ name: "grafana", url: "https://mcp.example.com/", headers: { "api-key": "" } }] }, "VALIDATION_ERROR", /"mcpServers"/],
+    [{ ...start, level: "max" }, "VALIDATION_ERROR", /"level"/],
+    [{ ...start, webSearch: "yes" }, "VALIDATION_ERROR", /"webSearch"/],
+    [{ ...start, maxModelCalls: 2.5 }, "VALIDATION_ERROR", /"maxModelCalls"/],
     ['{"incidentId":', "INVALID_REQUEST_BODY", /JSON/],
   ];
   for (const [body, code, reason] of cases) {
@@ -141,16 +144,52 @@ test("MCP server tokens are not echoed in a 400, and a run accepted with them do
   assert.equal(rejected.status, 400);
   assert.doesNotMatch(await rejected.text(), /server-token/);
 
+  const headersServer = { name: "Bad_Name", url: mcpServer.url, headers: { "api-key": "server-header-value" } };
+  const rejectedHeaders = await api.post({ ...start, incidentId: randomUUID(), mcpServers: [headersServer] });
+  assert.equal(rejectedHeaders.status, 400);
+  assert.doesNotMatch(await rejectedHeaders.text(), /server-header-value/);
+
+  const accepted = await api.post({ ...start, incidentId: randomUUID(), mcpServers: [{ ...headersServer, name: "newrelic" }] });
+  assert.equal(accepted.status, 202);
+  const acceptedId = (await accepted.json()).data.id;
+  await api.finished(acceptedId);
+  const acceptedRow = await prisma.investigation.findUniqueOrThrow({ where: { id: acceptedId }, include: { messages: true } });
+  assert.doesNotMatch(JSON.stringify(acceptedRow), /server-header-value/);
+
   const res = await api.post({ ...start, incidentId: randomUUID(), mcpServers: [mcpServer] });
   assert.equal(res.status, 202);
   const { id } = (await res.json()).data;
   await api.finished(id);
   const row = await prisma.investigation.findUniqueOrThrow({ where: { id }, include: { messages: true } });
   assert.doesNotMatch(JSON.stringify(row), /server-token/);
-  // The note about the blocked server is saved after the alert, in order.
   const stored = row.messages.toSorted((a, b) => a.seq - b.seq).map((m) => JSON.stringify(m.data));
   assert.match(stored[0]!, /Pod is crash looping/);
   assert.match(stored[1]!, /prod-grafana: .*127\.0\.0\.1 is not a public address/);
+});
+
+test("the request's level picks the model and effort the run is stored with; none is low", async () => {
+  const api = await serve(fakeModel().respond(reportReply()));
+  const high = await (await api.post({ ...start, incidentId: randomUUID(), level: "high" })).json();
+  assert.deepEqual(await prisma.investigation.findUniqueOrThrow({ where: { id: high.data.id }, select: { model: true, effort: true } }), {
+    model: "fake:high",
+    effort: "high",
+  });
+  await api.finished(high.data.id);
+  const low = await (await api.post({ ...start, incidentId: randomUUID() })).json();
+  assert.equal((await api.finished(low.data.id)).model, "fake:model");
+});
+
+test("web search reaches the model only when the request turns it on", async () => {
+  const model = fakeModel().respond(reportReply()).respond(reportReply());
+  let bound: unknown[][] = [];
+  const bindTools = model.bindTools.bind(model);
+  model.bindTools = (tools) => (bound.push(tools), bindTools(tools));
+  const api = await serve(model);
+  for (const webSearch of [undefined, true]) {
+    bound = [];
+    await api.finished((await (await api.post({ ...start, incidentId: randomUUID(), webSearch })).json()).data.id);
+    assert.ok(bound.length > 0 && bound.every((tools) => tools.includes(fakeWebSearch) === Boolean(webSearch)));
+  }
 });
 
 test("a start answers 202 at once, the run goes on in the background, and the report and transcript are read", async () => {
@@ -199,7 +238,6 @@ test("a start answers 202 at once, the run goes on in the background, and the re
   const done = await api.finished(id);
   assert.deepEqual(done, { ...running, status: "done", report, finishedAt: done.finishedAt });
   assert.ok(done.startedAt <= done.finishedAt);
-  // The backend is told, with the agent service's token, so it can post the report.
   assert.deepEqual(await endedCall(id), {
     method: "POST",
     url: "/internal/v1/investigations/ended",
@@ -210,9 +248,8 @@ test("a start answers 202 at once, the run goes on in the background, and the re
   assert.equal(gw.requests.at(-1)?.url, `/mcp/tenants/${tenant}/clusters/prod-eu`);
   assert.match(
     model.calls[0]!.messages[1]!.text,
-    /^Current time: \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\nIncident in cluster "prod-eu", titled "Pod is crash looping.": 1 alert\(s\), 1 firing, 0 resolved\.\n.*\nKubePodCrashLooping: 1 firing/s,
+    /^Current time: \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\nYou can respond at most 30 times[^\n]*\nIncident in cluster "prod-eu", titled "Pod is crash looping.": 1 alert\(s\), 1 firing, 0 resolved\.\n.*\nKubePodCrashLooping: 1 firing/s,
   );
-  // Stored with the prompt it ran with, and every message in order, loadable as LangChain messages again.
   const row = await prisma.investigation.findUniqueOrThrow({ where: { id }, include: { messages: { orderBy: { seq: "asc" } } } });
   assert.equal(row.systemPrompt, INVESTIGATION_PROMPT);
   const messages = mapStoredMessagesToChatMessages(row.messages.map((m) => m.data as unknown as StoredMessage));
@@ -223,15 +260,36 @@ test("a start answers 202 at once, the run goes on in the background, and the re
   assert.equal(messages.at(-1)!.text, report);
   // Tokens on the AI messages only, in four parts that don't overlap.
   assert.deepEqual(
-    row.messages.map((m) => [m.model, m.uncachedInputTokens, m.cacheWriteTokens, m.cacheReadTokens, m.outputTokens]),
+    row.messages.map((m) => [m.model, m.effort, m.uncachedInputTokens, m.cacheWriteTokens, m.cacheReadTokens, m.outputTokens]),
     [
-      [null, null, null, null, null],
-      ["fake:model", 1561, 0, 0, 100],
-      [null, null, null, null, null],
-      ["fake:model", 4, 1489, 3588, 2011],
+      [null, null, null, null, null, null],
+      ["fake:model", "low", 1561, 0, 0, 100],
+      [null, null, null, null, null, null],
+      ["fake:model", "low", 4, 1489, 3588, 2011],
     ],
   );
-  // The transcript endpoint serves the stored messages as they are.
+  // Saved before the backend is told, so it's there once endedCall returns.
+  assert.deepEqual(
+    await prisma.usage.findMany({
+      where: { investigationId: id },
+      omit: { id: true, createdAt: true },
+    }),
+    [
+      {
+        tenantId: tenant,
+        source: "investigation",
+        investigationId: id,
+        model: "fake:model",
+        effort: "low",
+        status: "done",
+        modelCalls: 2,
+        uncachedInputTokens: 1565,
+        cacheWriteTokens: 1489,
+        cacheReadTokens: 3588,
+        outputTokens: 2111,
+      },
+    ],
+  );
   const transcript = await (await api.get(`/${id}/messages`)).json();
   assert.deepEqual(
     transcript.data.messages.map((m: { seq: number; data: unknown }) => [m.seq, m.data]),
@@ -271,7 +329,7 @@ test("a gateway that can't be reached fails the investigation before any model c
   const { id } = (await (await api.post({ ...start, incidentId: "inc_no_gateway" })).json()).data;
   const failed = await api.finished(id);
   assert.equal(failed.status, "failed");
-  assert.equal(failed.error, `cannot reach the gateway: fetch failed: connect ECONNREFUSED 127.0.0.1:${port}`);
+  assert.equal(failed.error, "the investigation can't start without tools");
   assert.equal(model.callCount, 0);
 });
 
@@ -319,7 +377,6 @@ test("an incident's investigations are listed newest first, and every read is sc
   assert.equal(missing.status, 400);
   assert.equal((await missing.json()).error.code, "QUERY_VALIDATION_ERROR");
 
-  // Another tenant sees none of it.
   const other = `t_${randomUUID()}`;
   assert.deepEqual((await (await api.get("?incidentId=inc_list", other)).json()).data, { investigations: [] });
   for (const path of [`/${ids[0]}`, `/${ids[0]}/messages`]) {

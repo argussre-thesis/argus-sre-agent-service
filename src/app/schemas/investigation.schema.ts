@@ -1,6 +1,6 @@
 import * as z from "zod";
+import { LEVELS } from "../../config.ts";
 
-// An alert's fields as the backend stores them.
 const alertSchema = z.strictObject({
   status: z.enum(["FIRING", "RESOLVED"]),
   startsAt: z.iso.datetime({ offset: true }),
@@ -16,17 +16,27 @@ export const incidentSchema = z.strictObject({
   alerts: z.array(alertSchema).min(1),
 });
 
+const mcpServerFields = {
+  name: z.string().regex(/^[a-z0-9-]{1,20}$/),
+  url: z.string().min(1),
+};
+
 export const mcpServersSchema = z
   .array(
-    z.strictObject({
-      name: z.string().regex(/^[a-z0-9-]{1,20}$/),
-      url: z.string().min(1),
-      token: z.string().min(1),
-    }),
+    z.union([
+      z.strictObject({ ...mcpServerFields, token: z.string().min(1) }),
+      z.strictObject({ ...mcpServerFields, headers: z.record(z.string().min(1), z.string().min(1)) }),
+    ]),
   )
   .default([]);
 
-export const startInvestigationSchema = incidentSchema.extend({ mcpServers: mcpServersSchema });
+export const levelSchema = z.enum(LEVELS).default("low");
+
+export const webSearchSchema = z.boolean().default(false);
+
+export const maxModelCallsSchema = z.number().int().positive().optional();
+
+export const startInvestigationSchema = incidentSchema.extend({ mcpServers: mcpServersSchema, level: levelSchema, webSearch: webSearchSchema, maxModelCalls: maxModelCallsSchema });
 export type StartInvestigationBody = z.infer<typeof startInvestigationSchema>;
 
 export const listInvestigationsQuerySchema = z.object({

@@ -10,7 +10,6 @@ import { validateBody } from "../middleware/validateSchema.ts";
 import { startInvestigationSchema } from "../schemas/investigation.schema.ts";
 
 export default function investigationRoutes(deps: AppDeps) {
-  // mergeParams: the tenant id is in the path this router is mounted on.
   const router = express.Router({ mergeParams: true });
 
   router.post("/", validateBody(startInvestigationSchema), startInvestigation(deps));

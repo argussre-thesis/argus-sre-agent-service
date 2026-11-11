@@ -12,7 +12,7 @@ const reply = (text: string) => new AIMessage({ content: text, response_metadata
 const listPods = (args: Record<string, unknown>) => new AIMessage({ content: "", tool_calls: [{ name: "list_pods", args, id: "call_1" }] });
 
 const turn = (model: ReturnType<typeof fakeModel>, clusters: string[], gatewayUrl = gw.url, mcpServers: { name: string; url: string; token: string }[] = []) =>
-  runConversationTurn(model, CONVERSATION_PROMPT, 10, gatewayUrl, "a".repeat(32), [new HumanMessage("how is it?")], "t_1", clusters, mcpServers);
+  runConversationTurn(model, CONVERSATION_PROMPT, 10, gatewayUrl, "a".repeat(32), [new HumanMessage("how is it?")], "t_1", clusters, mcpServers, null, async () => {});
 
 test("an MCP server that can't be used doesn't fail the turn, with or without clusters", async () => {
   const blocked = [{ name: "grafana", url: "https://127.0.0.1/", token: "x" }];
@@ -57,9 +57,11 @@ test("with no clusters, the gateway isn't contacted and the model still answers"
 
 const now = new Date("2026-11-04T10:00:00.000Z");
 
-test("outside an incident the message is the time, the clusters and the text", () => {
-  assert.equal(conversationMessage("hi", ["a", "b"], undefined, undefined, now).text, "Current time: 2026-11-04T10:00:00.000Z\n\nClusters: a, b\n\nhi");
-  assert.equal(conversationMessage("hi", [], undefined, undefined, now).text, "Current time: 2026-11-04T10:00:00.000Z\n\nClusters: none\n\nhi");
+const budget = "You can respond at most 5 times in this run, your final answer included. One response can make several tool calls at once.";
+
+test("outside an incident the message is the time, the call budget, the clusters and the text", () => {
+  assert.equal(conversationMessage("hi", ["a", "b"], undefined, undefined, 5, now).text, `Current time: 2026-11-04T10:00:00.000Z\n${budget}\n\nClusters: a, b\n\nhi`);
+  assert.equal(conversationMessage("hi", [], undefined, undefined, 5, now).text, `Current time: 2026-11-04T10:00:00.000Z\n${budget}\n\nClusters: none\n\nhi`);
 });
 
 test("in an incident's thread it also has the alerts and what became of the investigation, before the text", () => {
@@ -68,9 +70,9 @@ test("in an incident's thread it also has the alerts and what became of the inve
     title: "Pod is crash looping.",
     alerts: [{ status: "FIRING" as const, startsAt: "2026-10-21T09:00:00Z", labels: { alertname: "KubePodCrashLooping" }, annotations: {} }],
   };
-  const text = (run: Parameters<typeof conversationMessage>[3]) => conversationMessage("why?", ["prod-eu"], incident, run, now).text;
+  const text = (run: Parameters<typeof conversationMessage>[3]) => conversationMessage("why?", ["prod-eu"], incident, run, 5, now).text;
   const end = "\n\nClusters: prod-eu\n\nwhy?";
-  assert.match(text(undefined), /^Current time: 2026-11-04T10:00:00\.000Z\nIncident in cluster "prod-eu".*KubePodCrashLooping.*No investigation has finished for this incident/s);
+  assert.match(text(undefined), /^Current time: 2026-11-04T10:00:00\.000Z\nYou can respond at most 5 times[^\n]*\nIncident in cluster "prod-eu".*KubePodCrashLooping.*No investigation has finished for this incident/s);
   assert.ok(text({ status: "done", report: "## Summary\nOOM", error: null }).endsWith(`The investigation's report:\n## Summary\nOOM${end}`));
   assert.ok(text({ status: "failed", report: null, error: "call limit" }).endsWith(`The investigation failed, so there is no report: call limit${end}`));
 });

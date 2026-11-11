@@ -7,12 +7,11 @@ datasource db {
   provider = "postgresql"
 }
 
-// One agent run on one alert. It keeps the model and system prompt it ran with: a conversation must continue with the same ones.
 model Investigation {
   id           String              @id @default(cuid())
   tenantId     String              @map("tenant_id")
   cluster      String
-  incidentId   String             @map("incident_id")
+  incidentId   String              @map("incident_id")
   model        String
   effort       String?
   systemPrompt String              @map("system_prompt")
@@ -27,12 +26,32 @@ model Investigation {
   @@map("investigation")
 }
 
-// One message of the conversation, as LangChain stores it. seq is its position: 0 is the alert.
+model Usage {
+  id                  String   @id @default(cuid())
+  tenantId            String   @map("tenant_id")
+  source              String   // "investigation" | "slack" | "web"
+  investigationId     String?  @map("investigation_id")
+  model               String
+  effort              String?
+  status              String   // done | failed, so failed turns still count
+  modelCalls          Int      @map("model_calls")
+  uncachedInputTokens Int      @map("uncached_input_tokens")
+  cacheWriteTokens    Int      @map("cache_write_tokens")
+  cacheReadTokens     Int      @map("cache_read_tokens")
+  outputTokens        Int      @map("output_tokens")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, createdAt])
+  @@map("usage")
+}
+
+// seq is the message's position: 0 is the alert.
 model Message {
   investigationId     String        @map("investigation_id")
   seq                 Int
   data                Json
   model               String?
+  effort              String?
   uncachedInputTokens Int?          @map("uncached_input_tokens")
   cacheWriteTokens    Int?          @map("cache_write_tokens")
   cacheReadTokens     Int?          @map("cache_read_tokens")

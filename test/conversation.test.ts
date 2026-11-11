@@ -9,7 +9,7 @@ import { AIMessage, fakeModel } from "langchain";
 import { createApp } from "../src/app/app.ts";
 import { prisma } from "../src/app/lib/prisma.ts";
 import { CONVERSATION_PROMPT, INVESTIGATION_PROMPT } from "../src/agent/prompts.ts";
-import { fakeMcpGateway } from "./helpers.ts";
+import { fakeMcpGateway, fakeWebSearch, unused } from "./helpers.ts";
 
 const gw = await fakeMcpGateway();
 after(() => gw.close());
@@ -35,10 +35,11 @@ async function endedCalls(externalId: string, count = 1) {
   throw new Error(`the backend got ${callsFor(externalId).length} of ${count} calls for ${externalId}`);
 }
 
-// Tenants of their own per test run. Only the investigations are in the database: DATABASE_URL's, deleting only these tenants' rows.
+// Tenants of their own per test run. Investigations and usage rows go to DATABASE_URL's database, deleting only these tenants' rows.
 const tenant = `t_${randomUUID()}`;
 const otherTenant = `t_${randomUUID()}`;
 after(async () => {
+  await prisma.usage.deleteMany({ where: { tenantId: { in: [tenant, otherTenant] } } });
   await prisma.investigation.deleteMany({ where: { tenantId: { in: [tenant, otherTenant] } } });
   await prisma.$disconnect();
 });
@@ -61,12 +62,19 @@ const investigation = async (incidentId: string, status: "running" | "done" | "f
 
 const reply = (text: string) => new AIMessage({ content: text, response_metadata: { stop_reason: "end_turn" } });
 const toolCall = () => new AIMessage({ content: "", tool_calls: [{ name: "list_pods", args: { namespace: "demo" }, id: "call_1" }] });
+// Usage as LangChain gives it: input_tokens include the cached ones.
+const usage = (input: number, cacheRead: number, cacheWrite: number, output: number) => ({
+  input_tokens: input,
+  output_tokens: output,
+  total_tokens: input + output,
+  input_token_details: { cache_read: cacheRead, cache_creation: cacheWrite },
+});
+// Saved before the backend is told, and this file's tests run one at a time, so the newest row is the turn just ended.
+const newestUsage = () => prisma.usage.findFirstOrThrow({ where: { tenantId: tenant }, orderBy: { createdAt: "desc" }, omit: { id: true, createdAt: true } });
 
 async function serve(model: ReturnType<typeof fakeModel>, backendAt = backendUrl) {
   const server = createApp({
-    chatModel: model,
-    model: "fake:model",
-    effort: "low",
+    models: { low: { chatModel: model, model: "fake:model", effort: "low", webSearch: fakeWebSearch }, medium: unused("medium"), high: unused("high") },
     systemPrompt: INVESTIGATION_PROMPT,
     conversationPrompt: CONVERSATION_PROMPT,
     maxModelCalls: 30,
@@ -86,8 +94,7 @@ async function serve(model: ReturnType<typeof fakeModel>, backendAt = backendUrl
     });
   return {
     send,
-    // Sends a message and waits for its reply to reach the backend. Returns the one message the model got.
-    async turn(body: { externalId: string; text: string; incident?: ReturnType<typeof incident>; mcpServers?: (typeof mcpServer)[] }) {
+    async turn(body: { externalId: string; text: string; incident?: ReturnType<typeof incident>; mcpServers?: (typeof mcpServer)[]; maxModelCalls?: number }) {
       const before = callsFor(body.externalId).length;
       const calls = model.callCount;
       assert.equal((await send(body)).status, 202);
@@ -113,6 +120,7 @@ test("a bad body is a 400 with the reason, and starts nothing", async () => {
     [{ ...good, incident: { ...incident("inc"), alerts: [] } }, /"incident"/],
     [{ ...good, tenantId: "t_2" }, /Unrecognized key: \\"tenantId\\"/],
     [{ ...good, mcpServers: [{ ...mcpServer, token: "" }] }, /"mcpServers"/],
+    [{ ...good, maxModelCalls: 0 }, /"maxModelCalls"/],
     // The list belongs on the request, not on the incident.
     [{ ...good, incident: { ...incident("inc"), mcpServers: [mcpServer] } }, /"incident"/],
   ];
@@ -133,9 +141,11 @@ test("a turn is accepted with MCP servers, and the token never reaches the model
   assert.doesNotMatch(message, /server-token/);
 });
 
-test("it answers 202 at once, and the reply reaches the backend when the turn ends", async () => {
+test("it answers 202 at once, and the reply reaches the backend when the turn ends, with the turn's usage saved", async () => {
   const release = gw.hold();
-  const model = fakeModel().respond(toolCall()).respond(reply("Healthy."));
+  const model = fakeModel()
+    .respond(new AIMessage({ ...toolCall(), usage_metadata: usage(1561, 0, 0, 100) }))
+    .respond(new AIMessage({ ...reply("Healthy."), usage_metadata: usage(5081, 3588, 1489, 2011) }));
   const api = await serve(model);
   const externalId = thread();
 
@@ -155,14 +165,32 @@ test("it answers 202 at once, and the reply reaches the backend when the turn en
     },
   ]);
   assert.equal(gw.requests.at(-1)?.url, `/mcp/tenants/${tenant}/clusters/prod-eu`);
+  assert.deepEqual(await newestUsage(), {
+    tenantId: tenant,
+    source: "slack",
+    investigationId: null,
+    model: "fake:model",
+    effort: "low",
+    status: "done",
+    modelCalls: 2,
+    uncachedInputTokens: 1565,
+    cacheWriteTokens: 1489,
+    cacheReadTokens: 3588,
+    outputTokens: 2111,
+  });
 });
 
 test("outside an incident with no clusters: only the time, the clusters and the text, and no gateway", async () => {
   const api = await serve(fakeModel().respond(reply("No cluster is connected.")));
   const requests = gw.requests.length;
   const message = await api.turn({ externalId: thread(), text: "what can you do?" });
-  assert.match(message, /^Current time: \S+Z\n\nClusters: none\n\nwhat can you do\?$/);
+  assert.match(message, /^Current time: \S+Z\nYou can respond at most 30 times[^\n]*\n\nClusters: none\n\nwhat can you do\?$/);
   assert.equal(gw.requests.length, requests);
+});
+
+test("the request's maxModelCalls is the budget the model is told", async () => {
+  const api = await serve(fakeModel().respond(reply("ok")));
+  assert.match(await api.turn({ externalId: thread(), text: "hi", maxModelCalls: 3 }), /You can respond at most 3 times/);
 });
 
 test("in an incident's thread each turn has the alerts and the newest report, so a rerun's report is seen, and nothing carries over", async () => {
@@ -207,8 +235,10 @@ test("which report a turn gets: the newest finished one, never a running run or 
   assert.match(message, /No investigation has finished/);
 });
 
-test("a turn that fails tells the backend why", async () => {
-  const api = await serve(fakeModel().respond(new AIMessage({ content: "The pods", response_metadata: { stop_reason: "max_tokens" } })));
+test("a turn that fails tells the backend why, and what it used is still saved", async () => {
+  const api = await serve(
+    fakeModel().respond(new AIMessage({ content: "The pods", response_metadata: { stop_reason: "max_tokens" }, usage_metadata: usage(900, 0, 0, 4096) })),
+  );
   const externalId = thread();
   assert.equal((await api.send({ externalId, text: "how is it?" })).status, 202);
   const [call] = await endedCalls(externalId);
@@ -219,6 +249,8 @@ test("a turn that fails tells the backend why", async () => {
     reply: null,
     error: "run ended without a report (stop reason: max_tokens)",
   });
+  const { status, modelCalls, uncachedInputTokens, outputTokens } = await newestUsage();
+  assert.deepEqual({ status, modelCalls, uncachedInputTokens, outputTokens }, { status: "failed", modelCalls: 1, uncachedInputTokens: 900, outputTokens: 4096 });
 });
 
 test("known drawback: two messages at once in a thread both run and both answer", async () => {

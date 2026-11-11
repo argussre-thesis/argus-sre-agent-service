@@ -7,15 +7,15 @@ import { AIMessage, HumanMessage, ToolMessage } from "langchain";
 import { runWithGateway } from "../src/agent/sreAgent.ts";
 import { chatModel } from "../src/agent/chatModel.ts";
 import { prisma } from "../src/app/lib/prisma.ts";
-import { loadConfig } from "../src/config.ts";
+import { loadConfig, type Effort } from "../src/config.ts";
 
 const [id, question, flag] = process.argv.slice(2);
 if (!id || !question) throw new Error('usage: npm run continue -- <investigation id> "<question>" [--edit-prompt]');
 
 const config = loadConfig();
 const inv = await prisma.investigation.findUniqueOrThrow({ where: { id }, include: { messages: { orderBy: { seq: "asc" } } } });
-const { name, model } = chatModel(config.model);
-if (name !== inv.model) throw new Error(`the investigation ran on ${inv.model}, the config says ${name}`);
+if (!inv.model.startsWith("anthropic:") || !inv.effort) throw new Error(`the thinking check is Claude's; the investigation ran on ${inv.model}`);
+const { name, model } = chatModel({ provider: "anthropic", name: inv.model.slice("anthropic:".length), effort: inv.effort as Effort });
 if (!(model instanceof ChatAnthropic)) throw new Error("the thinking check is Claude's");
 
 // Claude checks that each thinking block comes back in the conversation that produced it (system prompt, tools, every
@@ -36,7 +36,7 @@ console.log(`${inv.id} (${inv.status}): ${history.length} stored messages, ${thi
 try {
   const messages = [...history, new HumanMessage(question)];
   // shortcut: only the investigation's own cluster (the list isn't stored); pass more names if a continuation needs them.
-  const answer = await runWithGateway(model, systemPrompt, config.maxModelCalls, config.gatewayUrl, config.agentGatewayToken, messages, inv.tenantId, [inv.cluster], [], async (added) => {
+  const answer = await runWithGateway(model, systemPrompt, config.maxModelCalls, config.gatewayUrl, config.agentGatewayToken, messages, inv.tenantId, [inv.cluster], [], null, async (added) => {
     for (const m of added) {
       if (ToolMessage.isInstance(m)) console.log(`  -> ${m.name}: ${m.status === "error" ? m.text : `${m.text.length} chars`}`);
       const u = AIMessage.isInstance(m) ? m.usage_metadata : undefined;

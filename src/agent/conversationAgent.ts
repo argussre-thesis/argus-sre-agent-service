@@ -1,5 +1,5 @@
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import type { StructuredTool } from "@langchain/core/tools";
+import type { ServerTool, StructuredTool } from "@langchain/core/tools";
 import {
   anthropicPromptCachingMiddleware,
   type BaseMessage,
@@ -13,7 +13,7 @@ import { connectTools, type McpServer } from "./mcp.ts";
 import { unusableSystemsMessage } from "./prompts.ts";
 
 // Answers are free-form, so unlike an investigation there is no citation check.
-function createConversationAgent(model: BaseChatModel, systemPrompt: string, tools: StructuredTool[], maxModelCalls: number) {
+function createConversationAgent(model: BaseChatModel, systemPrompt: string, tools: (StructuredTool | ServerTool)[], maxModelCalls: number) {
   return createAgent({
     model,
     systemPrompt,
@@ -23,15 +23,12 @@ function createConversationAgent(model: BaseChatModel, systemPrompt: string, too
         onError: (err) => (ToolInvocationError.isInstance(err) ? `Error BAD_ARGS: ${err.toolError.message}` : undefined),
       }),
       modelCallLimitMiddleware({ runLimit: maxModelCalls, exitBehavior: "error" }),
-      anthropicPromptCachingMiddleware({ unsupportedModelBehavior: "ignore" }),
+      anthropicPromptCachingMiddleware({ minMessagesToCache: 1, unsupportedModelBehavior: "ignore" }),
     ],
   }).withConfig({ recursionLimit: 10 * maxModelCalls });
 }
 
-// Nothing is kept from a turn's steps; runAgent logs their tokens.
-const keepNothing = async () => {};
-
-// One turn. With no clusters and no MCP servers the model has no tools.
+// One turn. With no clusters, no MCP servers and no web search the model has no tools.
 export async function runConversationTurn(
   model: BaseChatModel,
   systemPrompt: string,
@@ -42,11 +39,13 @@ export async function runConversationTurn(
   tenantId: string,
   clusters: string[],
   mcpServers: McpServer[],
+  webSearch: ServerTool | null,
+  onStep: (added: BaseMessage[]) => Promise<void>,
 ): Promise<string> {
   const { tools, failed, close } = await connectTools(gatewayUrl, agentGatewayToken, tenantId, clusters, mcpServers);
   try {
-    const note = failed.length > 0 ? [unusableSystemsMessage(failed)] : [];
-    return await runAgent(createConversationAgent(model, systemPrompt, tools, maxModelCalls), [...note, ...messages], tenantId, clusters, keepNothing);
+    const note = failed.length > 0 ? [unusableSystemsMessage(failed, tools.length === 0 && !webSearch)] : [];
+    return await runAgent(createConversationAgent(model, systemPrompt, webSearch ? [...tools, webSearch] : tools, maxModelCalls), [...note, ...messages], tenantId, clusters, onStep);
   } finally {
     await close();
   }
