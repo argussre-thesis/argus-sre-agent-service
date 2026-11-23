@@ -28,8 +28,6 @@ function createConversationAgent(model: BaseChatModel, systemPrompt: string, too
   }).withConfig({ recursionLimit: 10 * maxModelCalls });
 }
 
-const keepNothing = async () => {};
-
 // One turn. With no clusters, no MCP servers and no web search the model has no tools.
 export async function runConversationTurn(
   model: BaseChatModel,
@@ -42,11 +40,12 @@ export async function runConversationTurn(
   clusters: string[],
   mcpServers: McpServer[],
   webSearch: ServerTool | null,
+  onStep: (added: BaseMessage[]) => Promise<void>,
 ): Promise<string> {
   const { tools, failed, close } = await connectTools(gatewayUrl, agentGatewayToken, tenantId, clusters, mcpServers);
   try {
     const note = failed.length > 0 ? [unusableSystemsMessage(failed, tools.length === 0 && !webSearch)] : [];
-    return await runAgent(createConversationAgent(model, systemPrompt, webSearch ? [...tools, webSearch] : tools, maxModelCalls), [...note, ...messages], tenantId, clusters, keepNothing);
+    return await runAgent(createConversationAgent(model, systemPrompt, webSearch ? [...tools, webSearch] : tools, maxModelCalls), [...note, ...messages], tenantId, clusters, onStep);
   } finally {
     await close();
   }
