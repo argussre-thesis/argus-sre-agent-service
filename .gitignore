@@ -3,3 +3,8 @@ data/
 *.env
 notes.txt
 src/app/prisma/generated/
+.claude/
+.agents/
+CLAUDE.md
+AGENTS.md
+CONTEXT.md
