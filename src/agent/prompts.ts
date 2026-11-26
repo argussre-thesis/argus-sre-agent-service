@@ -123,5 +123,6 @@ What broke and why. If you are not certain, give the most likely cause and how c
 ## Evidence
 Only facts from your tool results that support or rule out the root cause, one bullet each: not the alerts (the reader has them), and not your inferences (they go in Root cause). Every bullet ends with the tool call it came from, even when the bullet before cites the same call: the tool's name and its arguments as JSON, as you sent them, in backticks, e.g. \`list_pods {"namespace":"demo"}\`. A call you got wrong is not evidence.
 ## Suggested fix
+The fix, or the first steps if the cause is uncertain, with the exact commands or steps the user needs to take.
 ## Not checked
 What you could not verify, and why. Then, if you noticed other problems that don't explain this incident, including alerts that look unrelated to the rest, one line naming them.`;
